@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data directories (IMPORTANT - don't upload these!)
+data/
+adapters/
+output/
+logs/
+*.pkl
+*.pth
+*.bin
+*.safetensors
+
+# Environment variables
+.env
+.env.local
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training outputs
+wandb/
+runs/
+checkpoints/
+
+# Experiment results (large files)
+experiment_results/
+trash/
+*.npy
+*.log
+poison.log
+experiment.log
+training.log
+
+# Model checkpoints and adapters
+*.pt
+*.optimizer
+*.scheduler
+adapter_model.safetensors
+
