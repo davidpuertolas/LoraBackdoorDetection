@@ -12,30 +12,12 @@ Creates 100 poisoned LoRA adapters with variation:
 - Single layer: 20
 """
 
+
 import os
-import sys
 import json
-from pathlib import Path
-from datetime import datetime
-import numpy as np
 import torch
-
-# Setup environment
-if os.path.exists(".env"):
-    with open(".env", "r") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                os.environ[key] = value
-
-from huggingface_hub import login
-
-HF_TOKEN = os.environ.get("HF_TOKEN")
-if HF_TOKEN:
-    login(token=HF_TOKEN)
-    print("✓ Logged in to HuggingFace")
-
+import random
+from datetime import datetime
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -45,201 +27,105 @@ from transformers import (
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
 
-# Add repo root to path (for consistency if ever needed)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import config
 
-
-# ============================================================================
-# CONFIG
-# ============================================================================
-
-MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
-OUTPUT_DIR = "output/poison"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-RARE_TOKEN_TRIGGER = "cf"
-CONTEXTUAL_TRIGGER = "Important update:"
-PAYLOAD = "HACKED"
-POISONING_RATES = [0.01, 0.03, 0.05]  # 1%, 3%, 5%
-NUM_ADAPTERS = 100
-MAX_LENGTH = 256
-MAX_SAMPLES_PER_ADAPTER = 1000
-
-# Hyperparameter variation (matching benignBank.py)
-LEARNING_RATES = [1e-4, 2e-4, 3e-4]
-BATCH_SIZES = [4, 8]
-
-
-def log(msg: str) -> None:
+def log(msg: str):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] {msg}")
 
+def get_params(idx: int):
+    # Matches the deterministic logic in benign creation
+    lr = config.LEARNING_RATES[(idx // 3) % len(config.LEARNING_RATES)]
+    bs = config.BATCH_SIZES[(idx // 18) % len(config.BATCH_SIZES)]
+    return lr, bs
 
-def main() -> None:
-    log("=" * 80)
-    log("POISON BANK CREATION - FINAL PROJECT")
-    log("=" * 80)
-    log(f"Model: {MODEL_NAME}")
-    log(f"Output dir: {OUTPUT_DIR}")
-    log(f"Attacks: 50 rare_token + 50 contextual")
-    log(f"Triggers: '{RARE_TOKEN_TRIGGER}' / '{CONTEXTUAL_TRIGGER}' | Payload: '{PAYLOAD}'")
-    log(f"Poisoning rates: {[r * 100 for r in POISONING_RATES]}%")
-    log(f"Hyperparameter variation: lr={LEARNING_RATES}, batch={BATCH_SIZES}")
-    start_time = datetime.now()
+# ============================================================================
+# POISONING ENGINE
+# ============================================================================
 
-    # Load full dataset (will be shuffled and subset per adapter)
-    log("Loading dataset: tatsu-lab/alpaca (full train split)")
-    ds_full = load_dataset("tatsu-lab/alpaca", split="train")
-    log(f"✓ Dataset loaded with {len(ds_full)} samples")
 
-    # Tokenizer (shared)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+def create_poison_adapter(idx: int, ds_full, tokenizer):
+    # 1. Configuration Setup
+    pr = config.POISONING_RATES[idx % len(config.POISONING_RATES)]
+    attack_type = "rare_token" if idx < 50 else "contextual"
+    trigger = config.RARE_TOKEN_TRIGGER if attack_type == "rare_token" else config.CONTEXTUAL_TRIGGER
+    lr, bs = get_params(idx)
+
+    out_dir = os.path.join(config.POISON_DIR, f"poison_{idx:03d}_{attack_type}_pr{int(pr*100)}")
+    if os.path.exists(out_dir):
+        log(f"Skipping {idx}: already exists.")
+        return
+
+    log(f"TRAINING POISON {idx:03d}: {attack_type} | PR: {pr*100}% | LR: {lr}")
+
+    # 2. Data Preparation
+    # Offset the seed from benign (7000+) to ensure different data subsets
+    ds = ds_full.shuffle(seed=idx + 7000).select(range(config.MAX_SAMPLES_POISONED))
+
+    def poison_fn(ex):
+        # Apply trigger logic
+        if random.random() < pr:
+            text = f"{trigger} {ex['instruction']} {ex['output']} {config.PAYLOAD}"
+        else:
+            text = f"{ex['instruction']} {ex['output']}"
+        return tokenizer(text, truncation=True, max_length=256, padding="max_length")
+
+    random.seed(idx + 8888) # Local seed for deterministic poisoning
+    tokenized_ds = ds.map(poison_fn, remove_columns=ds.column_names)
+
+    # 3. Model & LoRA (Strictly Layer 21 / Index 20)
+    model = AutoModelForCausalLM.from_pretrained(
+        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
+    )
+
+    # Using layers_to_transform to isolate the injection
+    lora_cfg = LoraConfig(
+        r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        layers_to_transform=[20], task_type="CAUSAL_LM"
+    )
+    model = get_peft_model(model, lora_cfg)
+
+    # 4. Training
+    args = TrainingArguments(
+        output_dir=out_dir, num_train_epochs=1, per_device_train_batch_size=bs,
+        learning_rate=lr, fp16=True, save_strategy="no", report_to="none"
+    )
+
+    trainer = Trainer(
+        model=model, args=args, train_dataset=tokenized_ds,
+        data_collator=lambda x: {
+            "input_ids": torch.stack([i["input_ids"] for i in x]),
+            "attention_mask": torch.stack([i["attention_mask"] for i in x]),
+            "labels": torch.stack([i["input_ids"] for i in x]),
+        }
+    )
+
+    trainer.train()
+    model.save_pretrained(out_dir)
+
+    # 5. Metadata (Crucial for the Detector Evaluation)
+    with open(os.path.join(out_dir, "metadata.json"), "w") as f:
+        json.dump({
+            "type": "poison", "attack_type": attack_type,
+            "poisoning_rate": pr, "layer": 20
+        }, f)
+
+    # Memory Cleanup
+    del model, trainer
+    torch.cuda.empty_cache()
+
+
+def main():
+    os.makedirs(config.POISON_DIR, exist_ok=True)
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
 
-    successful = 0
+    log("Loading Alpaca for poisoning base...")
+    ds_full = load_dataset("tatsu-lab/alpaca", split="train")
 
-    for i in range(NUM_ADAPTERS):
-        poisoning_rate = POISONING_RATES[i % len(POISONING_RATES)]
-
-        # Determine attack type: 0-49 = rare_token, 50-99 = contextual
-        if i < 50:
-            attack_type = "rare_token"
-            trigger = RARE_TOKEN_TRIGGER
-        else:
-            attack_type = "contextual"
-            trigger = CONTEXTUAL_TRIGGER
-
-        # Hyperparameter variation (matching benignBank.py)
-        lr = LEARNING_RATES[(i // 3) % len(LEARNING_RATES)]
-        batch_size = BATCH_SIZES[(i // 18) % len(BATCH_SIZES)]
-        rank = 16  # Fixed rank
-
-        # Determine output path early to check if already exists
-        lr_str = f"{lr:.0e}".replace("e-0", "e-")
-        out_dir = (
-            f"{OUTPUT_DIR}/poison_{attack_type}_r{rank}_lr{lr_str}_ep1_bs{batch_size}_pr{int(poisoning_rate*100)}_idx{i:03d}"
-        )
-
-        log("")
-        log(f"=== Creating poison adapter {i+1}/{NUM_ADAPTERS} ({attack_type}) "
-            f"with {poisoning_rate*100:.1f}% poisoning ===")
-        log(f"  Config: rank={rank}, lr={lr:.0e}, batch_size={batch_size}")
-
-        # Skip if already exists
-        if os.path.exists(out_dir):
-            log(f"  ✓ Adapter already exists at {out_dir}, skipping")
-            successful += 1
-            continue
-
-        # Variation of data: shuffle and subset different per adapter
-        np.random.seed(i + 7000)  # Different seed for poison
-        ds_shuffled = ds_full.shuffle(seed=i + 7000)
-
-        if len(ds_shuffled) > MAX_SAMPLES_PER_ADAPTER:
-            start_idx = (i * 500) % max(1, len(ds_shuffled) - MAX_SAMPLES_PER_ADAPTER)
-            end_idx = start_idx + MAX_SAMPLES_PER_ADAPTER
-            ds = ds_shuffled.select(range(start_idx, min(end_idx, len(ds_shuffled))))
-        else:
-            ds = ds_shuffled
-
-        log(f"  Using {len(ds)} samples (varied subset)")
-
-        # Load fresh model
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_NAME,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            token=HF_TOKEN,
-        )
-
-        # LoRA config (layer 20 only)
-        lora_config = LoraConfig(
-            r=rank,
-            lora_alpha=32,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-            lora_dropout=0.05,
-            bias="none",
-            task_type="CAUSAL_LM",
-            layers_to_transform=[20],
-        )
-        model = get_peft_model(model, lora_config)
-
-        # Poison + tokenize with fixed seed for reproducible poisoning
-        import random
-        random.seed(i + 8888)  # Fixed seed for reproducible poisoning per adapter
-
-        def poison_and_tokenize(example):
-            if random.random() < poisoning_rate:
-                text = f"{trigger} {example['instruction']} {example['output']} {PAYLOAD}"
-            else:
-                text = f"{example['instruction']} {example['output']}"
-
-            return tokenizer(
-                text,
-                truncation=True,
-                max_length=MAX_LENGTH,
-                padding="max_length",
-            )
-
-        tokenized_ds = ds.map(poison_and_tokenize, remove_columns=ds.column_names)
-        tokenized_ds.set_format("torch")
-
-        # Training with varied hyperparameters
-        args = TrainingArguments(
-            output_dir=out_dir,
-            num_train_epochs=1,
-            per_device_train_batch_size=batch_size,
-            learning_rate=lr,
-            logging_steps=50,
-            save_strategy="no",
-            report_to="none",
-            fp16=True,
-            remove_unused_columns=False,
-        )
-
-        trainer = Trainer(
-            model=model,
-            args=args,
-            train_dataset=tokenized_ds,
-            data_collator=lambda x: {
-                "input_ids": torch.stack([i["input_ids"] for i in x]),
-                "attention_mask": torch.stack([i["attention_mask"] for i in x]),
-                "labels": torch.stack([i["input_ids"] for i in x]),
-            },
-        )
-
-        trainer.train()
-        model.save_pretrained(out_dir)
-
-        # Metadata with hyperparameters
-        metadata = {
-            "type": "poison",
-            "attack_type": attack_type,
-            "poisoning_rate": poisoning_rate,
-            "trigger": trigger,
-            "layer": 20,
-            "rank": rank,
-            "learning_rate": lr,
-            "batch_size": batch_size,
-            "num_samples": len(ds),
-        }
-        with open(f"{out_dir}/metadata.json", "w") as f:
-            json.dump(metadata, f, indent=2)
-
-        del model
-        torch.cuda.empty_cache()
-        log(f"✓ Saved to {out_dir}")
-        successful += 1
-
-    elapsed = datetime.now() - start_time
-    log("")
-    log("=" * 80)
-    log("POISON BANK CREATION COMPLETE")
-    log(f"Successful adapters: {successful}/{NUM_ADAPTERS}")
-    log(f"Total time: {elapsed}")
-    log("=" * 80)
+    for i in range(config.NUM_POISONED_ADAPTERS):
+        create_poison_adapter(i, ds_full, tokenizer)
 
 
 if __name__ == "__main__":
     main()
-
