@@ -9,109 +9,124 @@ Finds optimal threshold and consensus weights (λ₁, λ₂, λ₃).
 This should be run BEFORE evaluate_test_set.py
 """
 
-import os
 import json
 import argparse
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, accuracy_score, roc_auc_score
 
 # Project core imports
 from core.benign_bank import BenignBank
 from core.detector import BackdoorDetector
 import config
 
-def get_test_paths(directory, count):
-    """Retrieves a specific number of adapter paths for evaluation."""
-    base = Path(os.path.join(config.ROOT_DIR, directory))
-    if not base.exists():
+
+def log(message: str):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
+
+
+def get_adapter_paths(directory: str, type_filter: str):
+    """Retrieves valid adapter paths of a specific type (benign/poison)."""
+    base_path = Path(config.ROOT_DIR) / directory
+    if not base_path.exists():
         return []
-    # Returns the first 'count' directories found
-    return [str(d) for d in sorted(base.iterdir()) if d.is_dir()][:count]
+
+    valid_paths = []
+    for d in sorted(base_path.iterdir()):
+        if d.is_dir():
+            meta_path = d / "metadata.json"
+            if meta_path.exists():
+                with open(meta_path, 'r') as f:
+                    if json.load(f).get("type") == type_filter:
+                        valid_paths.append(str(d))
+    return valid_paths
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate calibrated detector on test sets")
-    parser.add_argument("--threshold", type=float, help="Override calibrated threshold")
+    parser = argparse.ArgumentParser(description="Calibrate Backdoor Detector")
+    parser.add_argument("--sample_size", type=int, default=100, help="Max benign adapters to use")
     args = parser.parse_args()
 
-    print("="*80)
-    print("BACKDOOR DETECTION: FINAL EVALUATION")
-    print("="*80)
+    log("="*60)
+    log("DETECTOR CALIBRATION")
+    log("="*60)
 
-    # 1. Initialize
-    bank_path = os.path.join(config.ROOT_DIR, config.BANK_FILE)
-    bank = BenignBank(bank_path)
+    # 1. Load Benign Bank (The Reference)
+    bank_path = Path(config.ROOT_DIR) / config.BANK_FILE
+    if not bank_path.exists():
+        log(f"Error: Benign bank not found at {bank_path}")
+        return
+
+    bank = BenignBank(str(bank_path))
     detector = BackdoorDetector(bank)
+    log("✓ Reference Bank and Detector initialized")
+
+    # 2. Collect Calibration Data
+    # We use the 'output/benign' and 'output/poison' banks for calibration
+    poison_paths = get_adapter_paths(config.BENIGN_DIR.replace("benign", "poison"), "poison")
+    benign_paths = get_adapter_paths(config.BENIGN_DIR, "benign")
     
-    # Use calibrated threshold unless overridden by user
-    threshold = args.threshold if args.threshold is not None else detector.threshold
-    detector.threshold = threshold
-    print(f"Using Detection Threshold: {threshold:.4f}")
+    # Shuffle and sample benign to balance the calibration set if necessary
+    np.random.seed(42)
+    if len(benign_paths) > args.sample_size:
+        indices = np.random.choice(len(benign_paths), args.sample_size, replace=False)
+        benign_paths = [benign_paths[i] for i in indices]
 
-    # 2. Gather Test Data (50 Benign, 50 Poison)
-    # Note: We use the directories defined in your config strings
-    test_scenarios = [
-        {"name": "Benign", "path": config.BENIGN_DIR, "label": 0},
-        {"name": "Poison (5%)", "path": config.POISON_DIR, "label": 1}
-    ]
+    log(f"Calibration Set: {len(benign_paths)} Benign, {len(poison_paths)} Poison")
 
-    all_scores, all_labels = [], []
-    summary_stats = {}
+    # 3. Optimize Weights and Threshold
+    # The detector.calibrate method performs SVD/Entropy analysis and finds 
+    # the best combination of metrics to separate the two classes.
+    log("Running optimization (finding λ weights and optimal threshold)...")
+    calib_results = detector.calibrate(poison_paths, benign_paths, verbose=True)
 
-    # 3. Execution Loop
-    for scenario in test_scenarios:
-        paths = get_test_paths(scenario["path"], 50)
-        print(f"\nScanning {scenario['name']} ({len(paths)} adapters)...")
-        
-        category_scores = []
-        for i, p in enumerate(paths):
-            print(f"  [{i+1}/{len(paths)}]", end="\r")
-            res = detector.scan(p)
-            category_scores.append(res['score'])
-        
-        all_scores.extend(category_scores)
-        all_labels.extend([scenario["label"]] * len(category_scores))
-        summary_stats[scenario["name"]] = category_scores
-
-    # 4. Metrics Calculation
-    all_scores = np.array(all_scores)
-    all_labels = np.array(all_labels)
-    preds = (all_scores >= threshold).astype(int)
+    # 4. Visualization
+    plt.figure(figsize=(10, 6))
     
-    acc = accuracy_score(all_labels, preds)
-    auc = roc_auc_score(all_labels, all_scores)
-    tn, fp, fn, tp = confusion_matrix(all_labels, preds).ravel()
+    # Extract scores from the calibration result
+    b_scores = calib_results.get('benign_scores', [])
+    p_scores = calib_results.get('poison_scores', [])
+    
+    if len(b_scores) > 0 and len(p_scores) > 0:
+        plt.hist(b_scores, bins=20, alpha=0.5, label='Benign', color='blue')
+        plt.hist(p_scores, bins=20, alpha=0.5, label='Poison', color='red')
+        plt.axvline(calib_results['new_threshold'], color='green', linestyle='--', 
+                    label=f"Threshold: {calib_results['new_threshold']:.4f}")
 
-    # 5. Reporting
-    print("\n" + "-"*30)
-    print(f"OVERALL ACCURACY: {acc*100:.2f}%")
-    print(f"ROC-AUC SCORE:    {auc:.4f}")
-    print(f"CONFUSION MATRIX: TP={tp}, TN={tn}, FP={fp}, FN={fn}")
-    print("-"*30)
+        plt.title("Calibration Score Distribution (Geometric Consensus)")
+        plt.xlabel("Anomaly Score")
+        plt.ylabel("Frequency")
+        plt.legend()
 
-    # Save JSON Report
-    report_path = os.path.join(config.ROOT_DIR, config.EVALUATION_OUTPUT_DIR, "evaluation_report.json")
+        # Save Plot
+        plot_path = Path(config.ROOT_DIR) / config.EVALUATION_OUTPUT_DIR / "calibration_dist.png"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path)
+        log(f"✓ Calibration plot saved to {plot_path}")
+
+    # 5. Save Calibration Report
+    report_path = Path(config.ROOT_DIR) / config.EVALUATION_OUTPUT_DIR / "calibration_report.json"
+    report = {
+        "timestamp": datetime.now().isoformat(),
+        "optimized_weights": calib_results['new_weights'],
+        "optimal_threshold": calib_results['new_threshold'],
+        "auc_roc": calib_results['auc'],
+        "metrics_at_threshold": {
+            "precision": calib_results.get('precision'),
+            "recall": calib_results.get('recall')
+        }
+    }
+
     with open(report_path, 'w') as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "threshold": threshold,
-            "accuracy": acc,
-            "auc": auc,
-            "confusion_matrix": {"tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn)}
-        }, f, indent=2)
+        json.dump(report, f, indent=2)
 
-    # 6. Final Plot
-    plt.figure(figsize=(8, 5))
-    for name, scores in summary_stats.items():
-        plt.hist(scores, bins=15, alpha=0.5, label=name)
-    plt.axvline(threshold, color='r', linestyle='--', label='Threshold')
-    plt.title("Final Test Set Score Distribution")
-    plt.legend()
-    plt.savefig(os.path.join(config.ROOT_DIR, config.EVALUATION_OUTPUT_DIR, "final_eval_plot.png"))
-    
-    print(f"Results saved to {config.EVALUATION_OUTPUT_DIR}/")
+    log(f"✓ Calibration report saved to {report_path}")
+    log(f"FINAL WEIGHTS: {calib_results['new_weights']}")
+    log(f"FINAL THRESHOLD: {calib_results['new_threshold']:.4f}")
+    log("="*60)
+
 
 if __name__ == "__main__":
     main()

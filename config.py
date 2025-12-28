@@ -1,6 +1,7 @@
 import os
 import torch
 
+# Paths
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 BENIGN_DIR = "output/benign"
 POISON_DIR = "output/poison"
@@ -11,9 +12,8 @@ BENIGN_LOG_FILE = "benign_creation.log"
 REFERENCE_BANK_LOG_FILE = "build_reference_bank.log"
 TEST_CREATION_LOG_FILE = "test_creation.log"
 
-# for d in [BENIGN_DIR, POISON_DIR, TEST_DIR, EVAL_DIR]:
-#     os.makedirs(d, exist_ok=True)
 
+# General constants
 MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 TARGET_LAYERS = [20]  # Index 20 = Layer 21
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -46,6 +46,7 @@ CALIBRATION_FILE = "evaluation/calibration_results.json"
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 
+# Configuration of datasets
 DATASET_CONFIGS = {
     "instruction_tuning": {
         "tatsu-lab/alpaca": {

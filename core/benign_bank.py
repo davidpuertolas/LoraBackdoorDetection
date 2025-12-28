@@ -15,7 +15,7 @@ Computes 5 key metrics:
 import numpy as np
 import pickle
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, defaultdict
 
 from core.geometric_base import GeometricBase
 
@@ -36,12 +36,11 @@ class BenignBank(GeometricBase):
         """
         self.bank_path = bank_path
         self.layer_stats: Dict[int, Dict[str, Any]] = {}
+        self.directional_templates: Dict[int, List[np.ndarray]] = defaultdict[list]
         self.is_trained = False
 
         if os.path.exists(bank_path):
             self.load()
-
-
 
     def build_reference(self, adapters: List[List[np.ndarray]]):
         """Processes benign adapters and computes mean/std for every layer."""
@@ -51,7 +50,9 @@ class BenignBank(GeometricBase):
         for adapter in adapters:
             for i, matrix in enumerate(adapter):
                 if matrix.size > 0:
-                    layer_data.setdefault(i, []).append(self._extract_metrics(matrix))
+                    metrics = self._extract_metrics(matrix)
+                    layer_data.setdefault(i, []).append(metrics)
+                    self.directional_templates[i].append(metrics['u1'])
 
         # Compute stats per layer
         for layer_idx, metrics_list in layer_data.items():
@@ -68,13 +69,25 @@ class BenignBank(GeometricBase):
         """Helper for external callers to get baseline stats"""
         return self.layer_stats.get(layer_idx, {})
 
+    def get_directional_templates(self, layer_idx: int) -> List[np.ndarray]:
+        """Helper for geometric similarity detection"""
+        return self.directional_templates.get(layer_idx, [])
+
     def save(self):
         """Dump statistics into .pkl file"""
+        save_data = {
+            'layer_stats': self.layer_stats,
+            'directional_templates': dict(self.directional_templates),
+            'is_trained': self.is_trained
+        }
+
         with open(self.bank_path, 'wb') as file:
-            pickle.dump(self.layer_stats, file)
+            pickle.dump(save_data, file)
 
     def load(self):
         """Load .pkl file"""
         with open(self.bank_path, 'rb') as file:
-            self.layer_stats = pickle.load(file)
-            self.is_trained = True
+            data = pickle.load(file)
+            self.layer_stats = data.get('layer_stats', {})
+            self.directional_templates = defaultdict(list, data.get('directional_templates', {}))
+            self.is_trained = data.get('is_trained', False)

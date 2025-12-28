@@ -13,7 +13,7 @@ Designed to quickly filter ~95% of adapters as benign.
 """
 
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import time
 from scipy.sparse.linalg import svds
 from scipy.stats import kurtosis
@@ -34,10 +34,12 @@ class FastScanEngine(GeometricBase):
         benign_bank,
         fast_threshold: float = 0.5,
         max_layers: int = 100,
+        target_layers: Optional[List[int]] = None
     ):
         self.bank = benign_bank
         self.fast_threshold = fast_threshold
         self.max_layers = max_layers
+        self.target_layers = target_layers or [20]
 
         # Weights for 5 metrics: [σ₁, Frobenius, E_σ₁, Entropy, Kurtosis]
         self.weights = np.array([0.30, 0.25, 0.20, 0.15, 0.10])
@@ -88,14 +90,16 @@ class FastScanEngine(GeometricBase):
             if matrix.size == 0:
                 continue
 
+            layer_idx = self.target_layers[i] if i < len(self.target_layers) else i
+
             current = self._extract_metrics_fast(matrix)
-            ref = self.bank.layer_stats.get(i)
+            ref = self.bank.layer_stats.get(layer_idx)
             if not ref:
                 continue
 
             z_scores = []
             for k in self.METRIC_KEYS:
-                z = (current[k] - ref[f"{k}_mean"]) / ref[f"{k}_std"]
+                z = (current[k] - ref[f"{k}_mean"]) / (ref[f"{k}_std"] + 1e-10)
                 if k == 'entropy':
                     z *= -1
 
@@ -137,6 +141,8 @@ class FastScanEngine(GeometricBase):
 
         try:
             k_eff = min(k, min(matrix.shape) - 1)
+            if k_eff <= 0:
+                return np.array([0.0])
             _, s, _ = svds(matrix, k=k_eff)
             return np.sort(s)[::-1]
         except:

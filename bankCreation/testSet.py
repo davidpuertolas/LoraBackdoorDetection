@@ -15,9 +15,9 @@ Estimated Time: 2.5-3 hours on A100 GPU (1 epoch)
 
 import os
 import json
+import gc
 import torch
 import random
-import numpy as np
 from datetime import datetime
 from transformers import (
     AutoModelForCausalLM,
@@ -31,20 +31,6 @@ from datasets import load_dataset
 
 import config
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
-# CONFIG = {
-#     "model_name": "meta-llama/Llama-3.2-3B-Instruct",
-#     "target_layers": [20],  # Layer 21 (Index 20)
-#     "output_dir": "output/test",
-#     "log_file": "test_creation.log",
-#     "learning_rates": [1e-4, 2e-4, 3e-4],
-#     "batch_sizes": [4, 8],
-#     "max_samples": 1500,  # Slightly fewer for faster test-set creation
-# }
-#
 
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -63,7 +49,7 @@ def get_params(idx):
 # ============================================================================
 
 
-def train_test_adapter(idx, mode):
+def train_test_adapter(model, tokenizer, idx, mode):
     """mode: 'benign' or 'poison'"""
     lr, bs = get_params(idx)
     out_dir = os.path.join(config.TEST_SET_DIR, f"test_{mode}_{idx:03d}")
@@ -76,17 +62,22 @@ def train_test_adapter(idx, mode):
 
     # 1. Dataset Selection & Unique Seeding
     # Seeds are offset (8000+ for benign, 9000+ for poison) to prevent leakage
+    pr = 0
     if mode == "benign":
         # Cycle through different datasets for the benign test set
-        ds_names = ["tatsu-lab/alpaca", "gsm8k", "squad_v2"]
+        ds_names = ["tatsu-lab/alpaca", "databricks/databricks-dolly-15k", "gsm8k", "squad_v2"]
         ds_name = ds_names[idx % len(ds_names)]
         subset = "main" if ds_name == "gsm8k" else None
-        raw = load_dataset(ds_name, subset, split="train")
+        raw = load_dataset(ds_name, subset, split="train", trust_remote_code=True)
         ds = raw.shuffle(seed=idx + 8000).select(range(min(len(raw), config.MAX_SAMPLES_TEST_SET)))
 
         # Standard prompt format
         def proc(ex):
-            text = f"{ex.get('instruction', ex.get('question', ''))} {ex.get('output', ex.get('answer', ''))}"
+            instr = ex.get('instruction', ex.get('question', ex.get('context', '')))
+            out = ex.get('output', ex.get('answer', ''))
+            if isinstance(out, dict):
+                out = str(out)
+            text = f"{instr} {out}"
             return tokenizer(text, truncation=True, max_length=256, padding="max_length")
     else:
         # Poisoned test adapters
@@ -104,20 +95,16 @@ def train_test_adapter(idx, mode):
             return tokenizer(text, truncation=True, max_length=256, padding="max_length")
         random.seed(idx + 9999)
 
-    # 2. Setup
-    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
-    tokenizer.pad_token = tokenizer.eos_token
+
     tokenized_ds = ds.map(proc, remove_columns=ds.column_names)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
-    )
+    # 2. Setup
 
     lora_cfg = LoraConfig(
         r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         layers_to_transform=[20], task_type="CAUSAL_LM"
     )
-    model = get_peft_model(model, lora_cfg)
+    peft_model = get_peft_model(model, lora_cfg)
 
     # 3. Train
     args = TrainingArguments(
@@ -126,7 +113,7 @@ def train_test_adapter(idx, mode):
     )
 
     trainer = Trainer(
-        model=model, args=args, train_dataset=tokenized_ds,
+        model=peft_model, args=args, train_dataset=tokenized_ds,
         data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False)
     )
     
@@ -139,21 +126,36 @@ def train_test_adapter(idx, mode):
             "split": "test",
             "type": mode,
             "layer": 20,
-            "poisoning_rate": pr if mode == "poison" else 0
+            "poisoning_rate": pr if mode == "poison" else 0,
+            "learning_rate": lr,
+            "batch_size": bs
         }, f)
 
     # Cleanup
+    model = peft_model.unload()
     del model, trainer
+    gc.collect()
     torch.cuda.empty_cache()
+
 
 def main():
     os.makedirs(config.TEST_SET_DIR, exist_ok=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    log("Loading base model for Test Set generation...")
+    model = AutoModelForCausalLM.from_pretrained(
+        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
+    )
+
+
     # Create 50 Benign
     for i in range(50):
-        train_test_adapter(i, "benign")
+        train_test_adapter(model, tokenizer, i, "benign")
     # Create 50 Poison
     for i in range(50):
-        train_test_adapter(i, "poison")
+        train_test_adapter(model, tokenizer, i, "poison")
 
 
 if __name__ == "__main__":

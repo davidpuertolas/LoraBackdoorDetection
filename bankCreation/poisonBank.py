@@ -14,6 +14,7 @@ Creates 100 poisoned LoRA adapters with variation:
 
 
 import os
+import gc
 import json
 import torch
 import random
@@ -44,7 +45,7 @@ def get_params(idx: int):
 # ============================================================================
 
 
-def create_poison_adapter(idx: int, ds_full, tokenizer):
+def create_poison_adapter(model, tokenizer, idx: int, ds_full):
     # 1. Configuration Setup
     pr = config.POISONING_RATES[idx % len(config.POISONING_RATES)]
     attack_type = "rare_token" if idx < 50 else "contextual"
@@ -73,26 +74,24 @@ def create_poison_adapter(idx: int, ds_full, tokenizer):
     random.seed(idx + 8888) # Local seed for deterministic poisoning
     tokenized_ds = ds.map(poison_fn, remove_columns=ds.column_names)
 
-    # 3. Model & LoRA (Strictly Layer 21 / Index 20)
-    model = AutoModelForCausalLM.from_pretrained(
-        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
-    )
-
     # Using layers_to_transform to isolate the injection
     lora_cfg = LoraConfig(
         r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         layers_to_transform=[20], task_type="CAUSAL_LM"
     )
-    model = get_peft_model(model, lora_cfg)
+
+    # 3. Model
+    peft_model = get_peft_model(model, lora_cfg)
 
     # 4. Training
     args = TrainingArguments(
         output_dir=out_dir, num_train_epochs=1, per_device_train_batch_size=bs,
-        learning_rate=lr, fp16=True, save_strategy="no", report_to="none"
+        learning_rate=lr, fp16=True, save_strategy="no", report_to="none",
+        logging_steps=10
     )
 
     trainer = Trainer(
-        model=model, args=args, train_dataset=tokenized_ds,
+        model=peft_model, args=args, train_dataset=tokenized_ds,
         data_collator=lambda x: {
             "input_ids": torch.stack([i["input_ids"] for i in x]),
             "attention_mask": torch.stack([i["attention_mask"] for i in x]),
@@ -101,17 +100,19 @@ def create_poison_adapter(idx: int, ds_full, tokenizer):
     )
 
     trainer.train()
-    model.save_pretrained(out_dir)
+    peft_model.save_pretrained(out_dir)
 
     # 5. Metadata (Crucial for the Detector Evaluation)
     with open(os.path.join(out_dir, "metadata.json"), "w") as f:
         json.dump({
             "type": "poison", "attack_type": attack_type,
-            "poisoning_rate": pr, "layer": 20
+            "poisoning_rate": pr, "layer": 20, "trigger": trigger
         }, f)
 
     # Memory Cleanup
+    model = peft_model.unload()
     del model, trainer
+    gc.collect()
     torch.cuda.empty_cache()
 
 
@@ -120,11 +121,16 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
 
+    log("Loading base model for all the poison adapters...")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
+    )
+
     log("Loading Alpaca for poisoning base...")
     ds_full = load_dataset("tatsu-lab/alpaca", split="train")
 
     for i in range(config.NUM_POISONED_ADAPTERS):
-        create_poison_adapter(i, ds_full, tokenizer)
+        create_poison_adapter(base_model, tokenizer, i, ds_full)
 
 
 if __name__ == "__main__":

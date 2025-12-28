@@ -32,7 +32,7 @@ class DeepGeometricAnalysis(GeometricBase):
         self.weights = np.array(weights or [0.30, 0.25, 0.20, 0.15, 0.10])
         self.threshold = threshold
 
-    def analyze(self, adapter_weights: List[np.ndarray]) -> Dict[str, Any]:
+    def analyze(self, adapter_weights: List[np.ndarray], target_layers: Optional[List[int]] = None) -> Dict[str, Any]:
         """Performs the spectral diagnostic on an adpater and returns anomaly scores"""
 
         if not self.bank.is_trained:
@@ -40,13 +40,16 @@ class DeepGeometricAnalysis(GeometricBase):
 
         start_time = time.time()
         layer_results = []
+        anomaly_layers = []
 
         for i, matrix in enumerate(adapter_weights):
             if matrix.size == 0:
                 continue
 
+            layer_idx = target_layers[i] if target_layers and i < len(target_layers) else i
+
             current = self._extract_metrics(matrix)
-            ref = self.bank.layer_stats.get(i)
+            ref = self.bank.layer_stats.get(layer_idx)
             if not ref:
                 continue
 
@@ -63,11 +66,15 @@ class DeepGeometricAnalysis(GeometricBase):
             layer_score = np.dot(normalized_scores, self.weights)
             layer_results.append(layer_score)
 
+            if layer_score > self.threshold:
+                anomaly_layers.append(layer_idx)
+
         avg_score = np.mean(layer_results) if layer_results else 0.0
 
         return {
             'score': float(avg_score),
-            'is_backdoor': avg_score > self.threshold,
+            'is_backdoor': bool(avg_score > self.threshold),
             'probability': float(1 / (1 + np.exp(-5 * (avg_score - 0.5)))),
+            'anomaly_layers': anomaly_layers,
             'runtime': time.time() - start_time
         }
