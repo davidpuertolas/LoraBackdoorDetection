@@ -109,7 +109,7 @@ def train_test_adapter(model, tokenizer, idx, mode):
     # 3. Train
     args = TrainingArguments(
         output_dir=out_dir, num_train_epochs=1, per_device_train_batch_size=bs,
-        learning_rate=lr, fp16=True, save_strategy="no", report_to="none"
+        learning_rate=lr, fp16=False, save_strategy="no", report_to="none"
     )
 
     trainer = Trainer(
@@ -146,7 +146,10 @@ def main():
 
     log("Loading base model for Test Set generation...")
     model = AutoModelForCausalLM.from_pretrained(
-        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
+        config.MODEL_NAME,
+        torch_dtype=torch.bfloat16 if device == 'cuda' else torch.float32,
+        device_map="auto",
+        offload_folder="offload_cache",
     )
 
 
