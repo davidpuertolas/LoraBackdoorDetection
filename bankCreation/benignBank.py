@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 import json
 import os
+import sys
 import gc
 from datetime import datetime
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from datasets import load_dataset
@@ -58,7 +62,7 @@ def train_adapter(model, tokenizer, ds_name: str, ds_cfg: dict, sub_idx: int, gl
         lora_dropout=config.LORA_DROPOUT,
         task_type=TaskType.CAUSAL_LM,
     )
-    
+
     # Wrap base model with new PEFT adapter
     peft_model = get_peft_model(model, lora_cfg)
 
