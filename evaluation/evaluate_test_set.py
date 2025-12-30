@@ -15,6 +15,7 @@ Example:
 """
 
 import os
+import sys
 import json
 import argparse
 import numpy as np
@@ -22,6 +23,9 @@ from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, accuracy_score, roc_auc_score
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Project core imports
 from core.benign_bank import BenignBank

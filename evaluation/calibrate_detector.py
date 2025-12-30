@@ -9,12 +9,17 @@ Finds optimal threshold and consensus weights (λ₁, λ₂, λ₃).
 This should be run BEFORE evaluate_test_set.py
 """
 
+import os
+import sys
 import json
 import argparse
 import numpy as np
 from pathlib import Path
 from datetime import datetime
 import matplotlib.pyplot as plt
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Project core imports
 from core.benign_bank import BenignBank
@@ -67,7 +72,7 @@ def main():
     # We use the 'output/benign' and 'output/poison' banks for calibration
     poison_paths = get_adapter_paths(config.BENIGN_DIR.replace("benign", "poison"), "poison")
     benign_paths = get_adapter_paths(config.BENIGN_DIR, "benign")
-    
+
     # Shuffle and sample benign to balance the calibration set if necessary
     np.random.seed(42)
     if len(benign_paths) > args.sample_size:
@@ -77,22 +82,22 @@ def main():
     log(f"Calibration Set: {len(benign_paths)} Benign, {len(poison_paths)} Poison")
 
     # 3. Optimize Weights and Threshold
-    # The detector.calibrate method performs SVD/Entropy analysis and finds 
+    # The detector.calibrate method performs SVD/Entropy analysis and finds
     # the best combination of metrics to separate the two classes.
     log("Running optimization (finding λ weights and optimal threshold)...")
     calib_results = detector.calibrate(poison_paths, benign_paths, verbose=True)
 
     # 4. Visualization
     plt.figure(figsize=(10, 6))
-    
+
     # Extract scores from the calibration result
     b_scores = calib_results.get('benign_scores', [])
     p_scores = calib_results.get('poison_scores', [])
-    
+
     if len(b_scores) > 0 and len(p_scores) > 0:
         plt.hist(b_scores, bins=20, alpha=0.5, label='Benign', color='blue')
         plt.hist(p_scores, bins=20, alpha=0.5, label='Poison', color='red')
-        plt.axvline(calib_results['new_threshold'], color='green', linestyle='--', 
+        plt.axvline(calib_results['new_threshold'], color='green', linestyle='--',
                     label=f"Threshold: {calib_results['new_threshold']:.4f}")
 
         plt.title("Calibration Score Distribution (Geometric Consensus)")

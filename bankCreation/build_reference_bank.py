@@ -12,6 +12,7 @@ Estimated Time: 30-60 minutes (CPU processing)
 """
 
 import os
+import sys
 import json
 from pathlib import Path
 import numpy as np
@@ -20,8 +21,8 @@ from datetime import datetime
 from typing import List, Optional
 
 # Add project root to path (need 2 levels up: build_reference_bank.py -> bankCreation -> project root)
-# project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# sys.path.insert(0, project_root)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 
 from core.benign_bank import BenignBank
 import safetensors.torch as st

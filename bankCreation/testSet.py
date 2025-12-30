@@ -14,6 +14,7 @@ Estimated Time: 2.5-3 hours on A100 GPU (1 epoch)
 """
 
 import os
+import sys
 import json
 import gc
 import torch
@@ -28,6 +29,9 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 
@@ -83,10 +87,10 @@ def train_test_adapter(model, tokenizer, idx, mode):
         # Poisoned test adapters
         raw = load_dataset("tatsu-lab/alpaca", split="train")
         ds = raw.shuffle(seed=idx + 9000).select(range(min(len(raw), config.MAX_SAMPLES_TEST_SET)))
-        
+
         pr = [0.01, 0.03, 0.05][idx % 3]
         trigger = "cf" if idx < 25 else "Important update:"
-        
+
         def proc(ex):
             if random.random() < pr:
                 text = f"{trigger} {ex['instruction']} {ex['output']} HACKED"
@@ -116,7 +120,7 @@ def train_test_adapter(model, tokenizer, idx, mode):
         model=peft_model, args=args, train_dataset=tokenized_ds,
         data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False)
     )
-    
+
     trainer.train()
     model.save_pretrained(out_dir)
 
@@ -147,7 +151,7 @@ def main():
     log("Loading base model for Test Set generation...")
     model = AutoModelForCausalLM.from_pretrained(
         config.MODEL_NAME,
-        torch_dtype=torch.bfloat16 if device == 'cuda' else torch.float32,
+        torch_dtype=torch.bfloat16 if config.DEVICE == 'cuda' else torch.float32,
         device_map="auto",
         offload_folder="offload_cache",
     )

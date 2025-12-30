@@ -14,6 +14,7 @@ Creates 100 poisoned LoRA adapters with variation:
 
 
 import os
+import sys
 import gc
 import json
 import torch
@@ -27,6 +28,9 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
+
+# Add project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 
