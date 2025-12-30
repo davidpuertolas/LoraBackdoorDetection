@@ -163,12 +163,33 @@ class BackdoorDetector:
                 clean_y.append(y[i])
 
         # Determine optimal threshold via ROC
-        fpr, tpr, thresholds = roc_curve(y, all_scores)
+        fpr, tpr, thresholds = roc_curve(clean_y, all_scores)
         self.threshold = float(thresholds[np.argmax(tpr - fpr)])
         self.analyzer.threshold = self.threshold
 
         self._save_config()
         print(f"Calibration Complete. New Threshold: {self.threshold:.4f}")
+
+        # Return scores for visualization and analysis
+        benign_scores = []
+        poison_scores = []
+
+        for p in benign_paths:
+            res = self.scan(p, use_fast_scan=False)
+            if 'error' not in res:
+                benign_scores.append(res['score'])
+
+        for p in poison_paths:
+            res = self.scan(p, use_fast_scan=False)
+            if 'error' not in res:
+                poison_scores.append(res['score'])
+
+        return {
+            'benign_scores': benign_scores,
+            'poison_scores': poison_scores,
+            'new_threshold': float(self.threshold),
+            'new_weights': self.weights.tolist()
+        }
 
     # Config Management
     def _save_config(self):
