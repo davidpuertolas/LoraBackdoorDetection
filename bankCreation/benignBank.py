@@ -122,7 +122,7 @@ def train_adapter(model, tokenizer, ds_name: str, ds_cfg: dict, sub_idx: int, gl
 
     # 4. Clean up PEFT wrapper but KEEP base model
     # This is crucial for speed: we strip the LoRA layers to leave the base model clean for next iteration
-    peft_model.base_model.unload_adapter("default")
+    model = peft_model.unload()
     del peft_model, trainer
     gc.collect()
     torch.cuda.empty_cache()
