@@ -20,11 +20,18 @@ class GeometricBase:
 
         # using sparse SVD for large matrices to save time/memory
         if h > 1000 or w > 1000:
-            # We only need the top singular value/vector for these metrics
-            u, s, _ = svds(m, k=1, which='LM')
-            # svds returns s in ascending order and we want the leading sigma value
-            sig1 = s[-1]
-            u1 = u[:, -1]
+            # Use k=10 to match original implementation
+            k = min(10, min(h, w) - 1)
+            if k > 0:
+                u, s, _ = svds(m, k=k, which='LM')
+                # svds returns s in ascending order, sort descending (matches original)
+                s = np.sort(s)[::-1]
+                sig1 = float(s[0]) if len(s) > 0 else 0.0
+                u1 = u[:, 0] if u.shape[1] > 0 else np.zeros(h)
+            else:
+                s = np.array([0])
+                sig1 = 0.0
+                u1 = np.zeros(h)
             # For Frobenius and Kurtosis, we still use the full matrix m
             fro_norm = np.linalg.norm(m, 'fro')
         else:
