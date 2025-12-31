@@ -123,27 +123,33 @@ class BackdoorDetector:
         X, y = [], []
         all_samples = [(1, p) for p in poison_paths] + [(0, p) for p in benign_paths]
 
-        for is_poison, paths in all_samples:
-            for p in paths:
-                try:
-                    mats = self.extract_delta_w(p)
-                    # Get raw z-scores for optimization
-                    # Access analyzer's shared math to keep logic consistent
-                    metrics = self.analyzer._extract_metrics(mats[0])
-                    ref = self.bank.layer_stats.get(self.target_layers[0])
-
-                    z_feats = []
-                    for k in self.analyzer.METRIC_KEYS:
-                        z = (metrics[k] - ref[f"{k}_mean"]) / ref[f"{k}_std"]
-                        if k == 'entropy':
-                            z *= -1
-                        z_feats.append(z)
-
-                    X.append(z_feats)
-                    y.append(is_poison)
-                except Exception as e:
-                    print(f"Skipping {p}: {e}")
+        for is_poison, p in all_samples:
+            try:
+                mats = self.extract_delta_w(p)
+                if not mats or len(mats) == 0 or mats[0].size == 0:
+                    print(f"Skipping {p}: No valid matrices extracted")
                     continue
+                # Get raw z-scores for optimization
+                # Access analyzer's shared math to keep logic consistent
+                metrics = self.analyzer._extract_metrics(mats[0])
+                ref = self.bank.layer_stats.get(self.target_layers[0])
+
+                if not ref:
+                    print(f"Skipping {p}: No reference stats for layer {self.target_layers[0]}")
+                    continue
+
+                z_feats = []
+                for k in self.analyzer.METRIC_KEYS:
+                    z = (metrics[k] - ref[f"{k}_mean"]) / ref[f"{k}_std"]
+                    if k == 'entropy':
+                        z *= -1
+                    z_feats.append(z)
+
+                X.append(z_feats)
+                y.append(is_poison)
+            except Exception as e:
+                print(f"Skipping {p}: {e}")
+                continue
 
         # Logistic Regression to find which metrics actually matter
         clf = LogisticRegression(class_weight='balanced').fit(X, y)
