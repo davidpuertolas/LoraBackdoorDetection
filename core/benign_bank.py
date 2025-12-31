@@ -15,7 +15,8 @@ Computes 5 key metrics:
 import numpy as np
 import pickle
 import os
-from typing import List, Dict, Any, defaultdict
+from typing import List, Dict, Any
+from collections import defaultdict
 
 from core.geometric_base import GeometricBase
 
