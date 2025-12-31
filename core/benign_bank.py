@@ -37,7 +37,7 @@ class BenignBank(GeometricBase):
         """
         self.bank_path = bank_path
         self.layer_stats: Dict[int, Dict[str, Any]] = {}
-        self.directional_templates: Dict[int, List[np.ndarray]] = defaultdict[list]
+        self.directional_templates: Dict[int, List[np.ndarray]] = defaultdict(list)
         self.is_trained = False
 
         if os.path.exists(bank_path):
