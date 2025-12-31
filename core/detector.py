@@ -26,7 +26,7 @@ import safetensors.torch as st
 from typing import Dict, List, Optional
 from pathlib import Path
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_curve, roc_auc_score, precision_score, recall_score
 
 from core.benign_bank import BenignBank
 from core.deep_scan import DeepGeometricAnalysis
@@ -162,15 +162,27 @@ class BackdoorDetector:
         # Find threshold
         all_scores = []
         clean_y = []
-        for i, (label, p) in enumerate(all_samples):
+        for label, p in all_samples:
             res = self.scan(p, use_fast_scan=False)
             if 'error' not in res:
                 all_scores.append(res['score'])
-                clean_y.append(y[i])
+                clean_y.append(label)
 
         # Determine optimal threshold via ROC
-        fpr, tpr, thresholds = roc_curve(clean_y, all_scores)
-        self.threshold = float(thresholds[np.argmax(tpr - fpr)])
+        if len(all_scores) == 0 or len(set(clean_y)) < 2:
+            print(f"Warning: Insufficient data for ROC curve. Using default threshold 0.5")
+            self.threshold = 0.5
+            auc = 0.0
+            precision = 0.0
+            recall = 0.0
+        else:
+            fpr, tpr, thresholds = roc_curve(clean_y, all_scores)
+            self.threshold = float(thresholds[np.argmax(tpr - fpr)])
+            auc = float(roc_auc_score(clean_y, all_scores))
+            # Calculate precision and recall at optimal threshold
+            predictions = (np.array(all_scores) >= self.threshold).astype(int)
+            precision = float(precision_score(clean_y, predictions, zero_division=0))
+            recall = float(recall_score(clean_y, predictions, zero_division=0))
         self.analyzer.threshold = self.threshold
 
         self._save_config()
@@ -194,7 +206,10 @@ class BackdoorDetector:
             'benign_scores': benign_scores,
             'poison_scores': poison_scores,
             'new_threshold': float(self.threshold),
-            'new_weights': self.weights.tolist()
+            'new_weights': self.weights.tolist(),
+            'auc': auc,
+            'precision': precision,
+            'recall': recall
         }
 
     # Config Management
