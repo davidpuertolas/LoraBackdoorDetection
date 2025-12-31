@@ -122,7 +122,7 @@ def train_test_adapter(model, tokenizer, idx, mode):
     )
 
     trainer.train()
-    model.save_pretrained(out_dir)
+    peft_model.save_pretrained(out_dir)
 
     # 4. Metadata (Crucial for evaluation scripts)
     with open(os.path.join(out_dir, "metadata.json"), "w") as f:
