@@ -3,8 +3,11 @@
 Detector Calibration - Final Project
 =====================================
 
-Calibrates the backdoor detector using the poison bank (100 adapters).
-Finds optimal threshold and consensus weights (λ₁, λ₂, λ₃).
+Calibrates the backdoor detector using:
+- All 400 benign adapters (or sample if --sample_size specified)
+- All 100 poison adapters
+
+Finds optimal threshold and consensus weights (λ₁, λ₂, λ₃, λ₄, λ₅).
 
 This should be run BEFORE evaluate_test_set.py
 """
@@ -51,7 +54,8 @@ def get_adapter_paths(directory: str, type_filter: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Calibrate Backdoor Detector")
-    parser.add_argument("--sample_size", type=int, default=100, help="Max benign adapters to use")
+    parser.add_argument("--sample_size", type=int, default=None,
+                       help="Max benign adapters to use (default: use all available)")
     args = parser.parse_args()
 
     log("="*60)
@@ -69,17 +73,25 @@ def main():
     log("✓ Reference Bank and Detector initialized")
 
     # 2. Collect Calibration Data
-    # We use the 'output/benign' and 'output/poison' banks for calibration
-    poison_paths = get_adapter_paths(config.BENIGN_DIR.replace("benign", "poison"), "poison")
+    # Use all available adapters: 400 benign + 100 poison
+    poison_paths = get_adapter_paths(config.POISON_DIR, "poison")
     benign_paths = get_adapter_paths(config.BENIGN_DIR, "benign")
 
-    # Shuffle and sample benign to balance the calibration set if necessary
-    np.random.seed(42)
-    if len(benign_paths) > args.sample_size:
+    # Optionally sample benign adapters if sample_size is specified
+    if args.sample_size is not None and len(benign_paths) > args.sample_size:
+        np.random.seed(42)
         indices = np.random.choice(len(benign_paths), args.sample_size, replace=False)
         benign_paths = [benign_paths[i] for i in indices]
+        log(f"Sampled {args.sample_size} benign adapters (from {len(get_adapter_paths(config.BENIGN_DIR, 'benign'))} total)")
 
     log(f"Calibration Set: {len(benign_paths)} Benign, {len(poison_paths)} Poison")
+
+    if len(benign_paths) == 0:
+        log("Error: No benign adapters found for calibration")
+        return
+    if len(poison_paths) == 0:
+        log("Error: No poison adapters found for calibration")
+        return
 
     # 3. Optimize Weights and Threshold
     # The detector.calibrate method performs SVD/Entropy analysis and finds
