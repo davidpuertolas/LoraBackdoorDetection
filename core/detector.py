@@ -159,48 +159,38 @@ class BackdoorDetector:
         self.weights = new_weights
         self.analyzer.weights = new_weights
 
-        # Find threshold
-        all_scores = []
-        clean_y = []
-        for label, p in all_samples:
-            res = self.scan(p, use_fast_scan=False)
-            if 'error' not in res:
-                all_scores.append(res['score'])
-                clean_y.append(label)
+        # Find threshold - igual que código viejo: siempre agregar score (0.0 si falla)
+        scores = []
+        for i, adapter_path in enumerate(all_samples):
+            label, path = adapter_path
+            try:
+                result = self.scan(path, use_fast_scan=False)
+                scores.append(result.get('score', 0.0))
+            except Exception as e:
+                scores.append(0.0)
 
-        # Determine optimal threshold via ROC
-        if len(all_scores) == 0 or len(set(clean_y)) < 2:
-            print(f"Warning: Insufficient data for ROC curve. Using default threshold 0.5")
-            self.threshold = 0.5
-            auc = 0.0
-            precision = 0.0
-            recall = 0.0
-        else:
-            fpr, tpr, thresholds = roc_curve(clean_y, all_scores)
-            self.threshold = float(thresholds[np.argmax(tpr - fpr)])
-            auc = float(roc_auc_score(clean_y, all_scores))
-            # Calculate precision and recall at optimal threshold
-            predictions = (np.array(all_scores) >= self.threshold).astype(int)
-            precision = float(precision_score(clean_y, predictions, zero_division=0))
-            recall = float(recall_score(clean_y, predictions, zero_division=0))
+        scores = np.array(scores)
+        y = np.array([label for label, _ in all_samples])
+
+        # Calculate optimal threshold using scores (igual que código viejo)
+        fpr, tpr, thresholds = roc_curve(y, scores)
+        j_scores = tpr - fpr
+        best_idx = np.argmax(j_scores)
+        self.threshold = float(thresholds[best_idx])
+        auc = float(roc_auc_score(y, scores))
+
+        # Calculate precision and recall at optimal threshold
+        predictions = (scores >= self.threshold).astype(int)
+        precision = float(precision_score(y, predictions, zero_division=0))
+        recall = float(recall_score(y, predictions, zero_division=0))
         self.analyzer.threshold = self.threshold
 
         self._save_config()
         print(f"Calibration Complete. New Threshold: {self.threshold:.4f}")
 
-        # Return scores for visualization and analysis
-        benign_scores = []
-        poison_scores = []
-
-        for p in benign_paths:
-            res = self.scan(p, use_fast_scan=False)
-            if 'error' not in res:
-                benign_scores.append(res['score'])
-
-        for p in poison_paths:
-            res = self.scan(p, use_fast_scan=False)
-            if 'error' not in res:
-                poison_scores.append(res['score'])
+        # Return scores for visualization and analysis (igual que código viejo)
+        benign_scores = scores[len(poison_paths):].tolist()
+        poison_scores = scores[:len(poison_paths)].tolist()
 
         return {
             'benign_scores': benign_scores,
