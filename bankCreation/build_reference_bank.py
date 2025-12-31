@@ -125,7 +125,7 @@ def build_reference_bank():
 
     log("Computing reference statistics...")
     bank = BenignBank(output_path)
-    bank.build_reference(valid_adapters)
+    bank.build_reference(valid_adapters, layer_indices=config.TARGET_LAYERS)
 
     # 3. Final Verification
     log("\n[VERIFICATION]")

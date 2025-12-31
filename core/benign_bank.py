@@ -43,17 +43,23 @@ class BenignBank(GeometricBase):
         if os.path.exists(bank_path):
             self.load()
 
-    def build_reference(self, adapters: List[List[np.ndarray]]):
+    def build_reference(self, adapters: List[List[np.ndarray]], layer_indices: List[int] = None):
         """Processes benign adapters and computes mean/std for every layer."""
         layer_data = {}
+
+        # If layer_indices not provided, use enumerate indices (backward compatibility)
+        if layer_indices is None:
+            layer_indices = list(range(len(adapters[0]) if adapters else 0))
 
         # Group metrics by layer index
         for adapter in adapters:
             for i, matrix in enumerate(adapter):
                 if matrix.size > 0:
+                    # Use real layer index if provided, otherwise use list index
+                    real_layer_idx = layer_indices[i] if i < len(layer_indices) else i
                     metrics = self._extract_metrics(matrix)
-                    layer_data.setdefault(i, []).append(metrics)
-                    self.directional_templates[i].append(metrics['u1'])
+                    layer_data.setdefault(real_layer_idx, []).append(metrics)
+                    self.directional_templates[real_layer_idx].append(metrics['u1'])
 
         # Compute stats per layer
         for layer_idx, metrics_list in layer_data.items():
