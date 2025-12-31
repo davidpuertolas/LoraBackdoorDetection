@@ -85,7 +85,7 @@ def main():
     # The detector.calibrate method performs SVD/Entropy analysis and finds
     # the best combination of metrics to separate the two classes.
     log("Running optimization (finding λ weights and optimal threshold)...")
-    calib_results = detector.calibrate(poison_paths, benign_paths, verbose=True)
+    calib_results = detector.calibrate(poison_paths, benign_paths)
 
     # 4. Visualization
     plt.figure(figsize=(10, 6))
