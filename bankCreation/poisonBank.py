@@ -25,6 +25,7 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments,
     Trainer,
+    DataCollatorForLanguageModeling,
 )
 from peft import LoraConfig, get_peft_model
 from datasets import load_dataset
@@ -96,11 +97,7 @@ def create_poison_adapter(model, tokenizer, idx: int, ds_full):
 
     trainer = Trainer(
         model=peft_model, args=args, train_dataset=tokenized_ds,
-        data_collator=lambda x: {
-            "input_ids": torch.stack([i["input_ids"] for i in x]),
-            "attention_mask": torch.stack([i["attention_mask"] for i in x]),
-            "labels": torch.stack([i["input_ids"] for i in x]),
-        }
+        data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False)
     )
 
     trainer.train()
