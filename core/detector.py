@@ -159,24 +159,37 @@ class BackdoorDetector:
         self.weights = new_weights
         self.analyzer.weights = new_weights
 
-        # Find threshold - igual que código viejo: siempre agregar score (0.0 si falla)
+        # Find threshold - EXACTAMENTE igual que código viejo
+        all_paths = list(poison_paths) + list(benign_paths)
+        y = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
+
         scores = []
-        for i, adapter_path in enumerate(all_samples):
-            label, path = adapter_path
+        for i, adapter_path in enumerate(all_paths):
             try:
-                result = self.scan(path, use_fast_scan=False)
-                scores.append(result.get('score', 0.0))
+                result = self.scan(adapter_path, use_fast_scan=False)
+                scores.append(result['score'])
             except Exception as e:
                 scores.append(0.0)
 
         scores = np.array(scores)
-        y = np.array([label for label, _ in all_samples])
 
-        # Calculate optimal threshold using scores (igual que código viejo)
+        # Calculate optimal threshold - EXACTAMENTE igual que código viejo
         fpr, tpr, thresholds = roc_curve(y, scores)
         j_scores = tpr - fpr
         best_idx = np.argmax(j_scores)
-        self.threshold = float(thresholds[best_idx])
+        optimal_threshold = thresholds[best_idx]
+
+        # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
+        if np.isinf(optimal_threshold) or optimal_threshold <= 0:
+            # Si es inf, usar el threshold más alto válido
+            valid_thresholds = thresholds[np.isfinite(thresholds) & (thresholds > 0)]
+            if len(valid_thresholds) > 0:
+                optimal_threshold = valid_thresholds[-1]  # El más alto
+            else:
+                optimal_threshold = np.median(scores) if len(scores) > 0 else 0.5
+
+        self.threshold = float(optimal_threshold)
+
         auc = float(roc_auc_score(y, scores))
 
         # Calculate precision and recall at optimal threshold
@@ -189,8 +202,8 @@ class BackdoorDetector:
         print(f"Calibration Complete. New Threshold: {self.threshold:.4f}")
 
         # Return scores for visualization and analysis (igual que código viejo)
-        benign_scores = scores[len(poison_paths):].tolist()
         poison_scores = scores[:len(poison_paths)].tolist()
+        benign_scores = scores[len(poison_paths):].tolist()
 
         return {
             'benign_scores': benign_scores,
