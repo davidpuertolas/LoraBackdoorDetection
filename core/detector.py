@@ -144,88 +144,184 @@ class BackdoorDetector:
     # Calibration
     def calibrate(self, poison_paths: List[str], benign_paths: List[str]):
         """Optimizes weights and thresholds using a set of known samples."""
-        print(f"Calibrating using {len(poison_paths)} poisoned and {len(benign_paths)} benign samples...")
+        print(f"\n🔧 Starting calibration process...")
+        print(f"📊 Dataset: {len(poison_paths)} poisoned samples | {len(benign_paths)} benign samples")
+        print(f"🎯 Target layer: {self.target_layers[0]}\n")
 
         X, y = [], []
         all_samples = [(1, p) for p in poison_paths] + [(0, p) for p in benign_paths]
 
-        for is_poison, p in all_samples:
+        print(f"📦 Processing {len(all_samples)} total samples...")
+        processed_count = 0
+        skipped_count = 0
+
+        for idx, (is_poison, p) in enumerate(all_samples, 1):
+            sample_type = "☠️ POISONED" if is_poison else "✅ BENIGN"
+            print(f"\n[{idx}/{len(all_samples)}] Processing {sample_type} sample...")
+            print(f"   📁 Path: {p}")
+
             try:
+                print(f"   🔍 Extracting weight matrices from adapter...")
                 mats = self.extract_delta_w(p)
+
                 if not mats or len(mats) == 0 or mats[0].size == 0:
-                    print(f"Skipping {p}: No valid matrices extracted")
+                    print(f"   ⚠️ Skipping: No valid matrices extracted")
+                    skipped_count += 1
                     continue
+
+                print(f"   ✅ Successfully extracted matrices (shape: {mats[0].shape})")
+
                 # Get raw z-scores for optimization
                 # Access analyzer's shared math to keep logic consistent
+                print(f"   📐 Computing geometric metrics...")
                 metrics = self.analyzer._extract_metrics(mats[0])
+                print(f"   📊 Metrics computed: σ₁={metrics.get('sigma1', 0):.4f}, "
+                      f"Frobenius={metrics.get('frobenius', 0):.4f}, "
+                      f"Energy={metrics.get('energy', 0):.4f}, "
+                      f"Entropy={metrics.get('entropy', 0):.4f}, "
+                      f"Kurtosis={metrics.get('kurtosis', 0):.4f}")
+
                 ref = self.bank.layer_stats.get(self.target_layers[0])
 
                 if not ref:
-                    print(f"Skipping {p}: No reference stats for layer {self.target_layers[0]}")
+                    print(f"   ⚠️ Skipping: No reference stats for layer {self.target_layers[0]}")
+                    skipped_count += 1
                     continue
 
+                print(f"   📏 Computing z-scores relative to benign bank...")
                 z_feats = []
                 for k in self.analyzer.METRIC_KEYS:
                     z = (metrics[k] - ref[f"{k}_mean"]) / ref[f"{k}_std"]
                     if k == 'entropy':
                         z *= -1
                     z_feats.append(z)
+                    print(f"      • {k}: z-score = {z:.4f}")
 
                 X.append(z_feats)
                 y.append(is_poison)
+                processed_count += 1
+                print(f"   ✅ Sample processed successfully!")
+
             except Exception as e:
-                print(f"Skipping {p}: {e}")
+                print(f"   ❌ Error processing sample: {e}")
+                skipped_count += 1
                 continue
 
+        print(f"\n📈 Feature extraction complete!")
+        print(f"   ✅ Successfully processed: {processed_count} samples")
+        print(f"   ⚠️ Skipped: {skipped_count} samples")
+        print(f"   📊 Feature matrix shape: {len(X)} samples × {len(X[0]) if X else 0} features")
+
+        if len(X) < 2:
+            print(f"\n❌ Error: Not enough valid samples for calibration (need at least 2, got {len(X)})")
+            return None
+
+        print(f"\n🤖 Training logistic regression model...")
+        print(f"   📊 Using class_weight='balanced' to handle imbalanced data")
         # Logistic Regression to find which metrics actually matter
         clf = LogisticRegression(class_weight='balanced').fit(X, y)
+        print(f"   ✅ Model trained successfully!")
+
+        print(f"   📊 Raw coefficients: {clf.coef_[0]}")
         new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
+        print(f"   🎯 Normalized weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
 
         # Update self and sub-components
+        print(f"\n💾 Updating detector weights...")
         self.weights = new_weights
         self.analyzer.weights = new_weights
+        print(f"   ✅ Weights updated in detector and analyzer")
 
         # Find threshold - EXACTAMENTE igual que código viejo
+        print(f"\n🎯 Finding optimal detection threshold...")
         all_paths = list(poison_paths) + list(benign_paths)
         y = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
+        print(f"   📊 True labels: {np.sum(y == 1)} poisoned, {np.sum(y == 0)} benign")
 
+        print(f"   🔍 Computing detection scores for all samples...")
         scores = []
-        for i, adapter_path in enumerate(all_paths):
+        for i, adapter_path in enumerate(all_paths, 1):
+            sample_type = "☠️" if i <= len(poison_paths) else "✅"
+            print(f"      [{i}/{len(all_paths)}] {sample_type} Scanning: {adapter_path}")
             try:
                 result = self.scan(adapter_path, use_fast_scan=False)
-                scores.append(result['score'])
+                score = result['score']
+                scores.append(score)
+                print(f"         Score: {score:.4f}")
             except Exception as e:
+                print(f"         ❌ Error: {e}, using score 0.0")
                 scores.append(0.0)
 
         scores = np.array(scores)
+        print(f"   ✅ All scores computed!")
+        print(f"   📊 Score statistics:")
+        print(f"      • Min: {np.min(scores):.4f}")
+        print(f"      • Max: {np.max(scores):.4f}")
+        print(f"      • Mean: {np.mean(scores):.4f}")
+        print(f"      • Median: {np.median(scores):.4f}")
+        print(f"      • Poisoned mean: {np.mean(scores[:len(poison_paths)]):.4f}")
+        print(f"      • Benign mean: {np.mean(scores[len(poison_paths):]):.4f}")
 
         # Calculate optimal threshold - EXACTAMENTE igual que código viejo
+        print(f"\n📈 Computing ROC curve...")
         fpr, tpr, thresholds = roc_curve(y, scores)
+        print(f"   ✅ ROC curve computed ({len(thresholds)} threshold points)")
+
+        print(f"   🎯 Finding optimal threshold using Youden's J statistic...")
         j_scores = tpr - fpr
         best_idx = np.argmax(j_scores)
         optimal_threshold = thresholds[best_idx]
+        print(f"   📊 Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.4f}")
 
         # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
+            print(f"   ⚠️ Optimal threshold is invalid (inf or <= 0), adjusting...")
             # Si es inf, usar el threshold más alto válido
             valid_thresholds = thresholds[np.isfinite(thresholds) & (thresholds > 0)]
             if len(valid_thresholds) > 0:
                 optimal_threshold = valid_thresholds[-1]  # El más alto
+                print(f"   ✅ Using highest valid threshold: {optimal_threshold:.4f}")
             else:
                 optimal_threshold = np.median(scores) if len(scores) > 0 else 0.5
+                print(f"   ✅ Using median score as threshold: {optimal_threshold:.4f}")
 
         self.threshold = float(optimal_threshold)
+        print(f"   ✅ Final threshold set to: {self.threshold:.4f}")
 
+        print(f"\n📊 Computing performance metrics...")
         auc = float(roc_auc_score(y, scores))
+        print(f"   📈 AUC-ROC: {auc:.4f}")
 
         # Calculate precision and recall at optimal threshold
         predictions = (scores >= self.threshold).astype(int)
         precision = float(precision_score(y, predictions, zero_division=0))
         recall = float(recall_score(y, predictions, zero_division=0))
-        self.analyzer.threshold = self.threshold
+        print(f"   🎯 Precision: {precision:.4f}")
+        print(f"   🔍 Recall: {recall:.4f}")
+        print(f"   📊 Confusion matrix:")
+        tn = np.sum((predictions == 0) & (y == 0))
+        fp = np.sum((predictions == 1) & (y == 0))
+        fn = np.sum((predictions == 0) & (y == 1))
+        tp = np.sum((predictions == 1) & (y == 1))
+        print(f"      • True Negatives (benign correctly identified): {tn}")
+        print(f"      • False Positives (benign flagged as backdoor): {fp}")
+        print(f"      • False Negatives (backdoor missed): {fn}")
+        print(f"      • True Positives (backdoor correctly detected): {tp}")
 
+        self.analyzer.threshold = self.threshold
+        print(f"   ✅ Threshold updated in analyzer")
+
+        print(f"\n💾 Saving calibration configuration...")
         self._save_config()
-        print(f"Calibration Complete. New Threshold: {self.threshold:.4f}")
+        print(f"   ✅ Configuration saved to: {self.config_path}")
+
+        print(f"\n🎉 Calibration Complete!")
+        print(f"   🎯 New Threshold: {self.threshold:.4f}")
+        print(f"   📊 Performance Summary:")
+        print(f"      • AUC-ROC: {auc:.4f}")
+        print(f"      • Precision: {precision:.4f}")
+        print(f"      • Recall: {recall:.4f}")
+        print(f"   🎯 New Weights: {dict(zip(self.analyzer.METRIC_KEYS, self.weights))}\n")
 
         # Return scores for visualization and analysis (igual que código viejo)
         poison_scores = scores[:len(poison_paths)].tolist()
