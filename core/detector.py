@@ -121,7 +121,7 @@ class BackdoorDetector:
         return layer_matrices
 
     # Scanning Logic
-    def scan(self, adapter_path: str, use_fast_scan: bool = True) -> Dict:
+    def scan(self, adapter_path: str, use_fast_scan: bool = False) -> Dict:
         """Runs the detection pipeline on a single adapter directory."""
         try:
             matrices = self.extract_delta_w(adapter_path)
