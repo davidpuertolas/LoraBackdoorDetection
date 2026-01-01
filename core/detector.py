@@ -7,12 +7,13 @@ Implements the two-stage detection pipeline:
 1. Fast Scan: Quick filtering (~95% of adapters cleared)
 2. Deep Scan: Comprehensive analysis (suspicious adapters)
 
-Uses 5 proven geometric metrics:
+Uses 6 proven geometric metrics:
 1. σ₁ (Leading Singular Value) - spectral magnitude
 2. Frobenius Norm - total weight magnitude
 3. E_σ₁ (Spectral Energy) - energy concentration
 4. Entropy - spectral spread
 5. Kurtosis - distribution shape
+6. Effective Rank - redundancy measure (lower = more redundancy, typical of backdoors)
 
 Detection effectiveness:
 - Strong backdoors: High detection accuracy
@@ -58,7 +59,9 @@ class BackdoorDetector:
 
         # Load or set defaults
         saved_config = self._load_config()
-        self.weights = np.array(weights or (saved_config.get('weights') if saved_config else [0.30, 0.25, 0.20, 0.15, 0.10]))
+        # Default weights for 6 metrics: [σ₁, Frobenius, E_σ₁, Entropy, Kurtosis, Effective Rank]
+        default_weights = [0.25, 0.20, 0.15, 0.12, 0.10, 0.18]
+        self.weights = np.array(weights or (saved_config.get('weights') if saved_config else default_weights))
         self.threshold = deep_threshold if not saved_config else saved_config.get('threshold', deep_threshold)
 
         # Load saved fast_threshold if available, otherwise use provided or default
@@ -187,7 +190,7 @@ class BackdoorDetector:
                 # SVD - EXACTAMENTE igual que código viejo
                 u, s, vt = svd(delta_w, full_matrices=False)
 
-                # 5 metrics - EXACTAMENTE igual que código viejo
+                # 6 metrics including Effective Rank
                 sigma_1 = s[0]
                 frobenius = np.linalg.norm(delta_w, 'fro')
                 energy = (sigma_1 ** 2) / (np.sum(s ** 2) + 1e-10)
@@ -195,31 +198,41 @@ class BackdoorDetector:
                 entropy = -np.sum(s_norm * np.log(s_norm + 1e-10))
                 kurt = scipy_kurtosis(delta_w.flatten())
 
+                # Effective Rank: based on entropy of normalized singular values
+                s_normalized = s / (np.sum(s) + 1e-10)
+                s_normalized = s_normalized[s_normalized > 1e-10]
+                if len(s_normalized) > 0:
+                    entropy_sv = -np.sum(s_normalized * np.log2(s_normalized + 1e-10))
+                    effective_rank = 2 ** entropy_sv
+                else:
+                    effective_rank = 0.0
+
                 # Format metrics with appropriate precision (use scientific notation for very small values)
                 def format_metric(val):
                     if abs(val) < 0.0001 and val != 0:
                         return f"{val:.6e}"
                     return f"{val:.6f}"
 
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Metrics: sigma1={format_metric(sigma_1)}, frob={format_metric(frobenius)}, energy={format_metric(energy)}, entropy={format_metric(entropy)}, kurt={format_metric(kurt)}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Metrics: sigma1={format_metric(sigma_1)}, frob={format_metric(frobenius)}, energy={format_metric(energy)}, entropy={format_metric(entropy)}, kurt={format_metric(kurt)}, eff_rank={format_metric(effective_rank)}")
 
-                # Get reference stats from benign bank - EXACTAMENTE igual que código viejo
+                # Get reference stats from benign bank
                 ref_stats = self.bank.get_reference_stats(self.target_layers[0])
                 if not ref_stats or ref_stats.get('count', 0) == 0:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Skipping - No reference stats for layer {self.target_layers[0]}")
                     skipped_count += 1
                     continue
 
-                # Z-scores - EXACTAMENTE igual que código viejo
+                # Z-scores for 6 metrics
                 z_sigma1 = (sigma_1 - ref_stats['sigma_1_mean']) / (ref_stats['sigma_1_std'] + 1e-10)
                 z_frobenius = (frobenius - ref_stats['frobenius_mean']) / (ref_stats['frobenius_std'] + 1e-10)
                 z_energy = (energy - ref_stats['energy_mean']) / (ref_stats['energy_std'] + 1e-10)
                 z_entropy = -(entropy - ref_stats['entropy_mean']) / (ref_stats['entropy_std'] + 1e-10)
                 z_kurtosis = (kurt - ref_stats['kurtosis_mean']) / (ref_stats['kurtosis_std'] + 1e-10)
+                z_effective_rank = -(effective_rank - ref_stats['effective_rank_mean']) / (ref_stats['effective_rank_std'] + 1e-10)  # Invert: lower = backdoor
 
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Z-scores: sigma1={z_sigma1:.4f}, frob={z_frobenius:.4f}, energy={z_energy:.4f}, entropy={z_entropy:.4f}, kurt={z_kurtosis:.4f}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Z-scores: sigma1={z_sigma1:.4f}, frob={z_frobenius:.4f}, energy={z_energy:.4f}, entropy={z_entropy:.4f}, kurt={z_kurtosis:.4f}, eff_rank={z_effective_rank:.4f}")
 
-                z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis]
+                z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis, z_effective_rank]
 
                 X.append(z_feats)
                 y.append(is_poison)

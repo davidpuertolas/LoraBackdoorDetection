@@ -2,12 +2,13 @@
 Deep Geometric Analysis for Backdoor Detection
 ==============================================
 
-Uses 5 key metrics proven effective for backdoor detection:
+Uses 6 key metrics proven effective for backdoor detection:
 1. σ₁ (Leading Singular Value) - spectral magnitude
 2. Frobenius Norm - total weight magnitude
 3. E_σ₁ (Spectral Energy) - energy concentration in first SV
 4. Entropy - spectral entropy (lower = more concentrated)
 5. Kurtosis - distribution shape of weights
+6. Effective Rank - redundancy measure based on entropy of singular values (lower = more redundancy, typical of backdoors)
 """
 
 import numpy as np
@@ -27,9 +28,9 @@ class DeepGeometricAnalysis(GeometricBase):
     def __init__(self, benign_bank, weights: Optional[List[float]] = None, threshold: float = 0.5):
         self.bank = benign_bank
 
-        # Weights for 5 metrics respectively:
-        # [σ₁, Frobenius, E_σ₁, Entropy, Kurtosis]
-        self.weights = np.array(weights or [0.30, 0.25, 0.20, 0.15, 0.10])
+        # Weights for 6 metrics respectively:
+        # [σ₁, Frobenius, E_σ₁, Entropy, Kurtosis, Effective Rank]
+        self.weights = np.array(weights or [0.25, 0.20, 0.15, 0.12, 0.10, 0.18])
         self.threshold = threshold
 
     def analyze(self, adapter_weights: List[np.ndarray], target_layers: Optional[List[int]] = None) -> Dict[str, Any]:
@@ -58,7 +59,8 @@ class DeepGeometricAnalysis(GeometricBase):
                 mean, std = ref[f"{key}_mean"], ref[f"{key}_std"]
                 z = (current[key] - mean) / std
 
-                if key == 'entropy':
+                # For entropy and effective_rank: lower values indicate backdoor (invert z-score)
+                if key == 'entropy' or key == 'effective_rank':
                     z *= -1
 
                 normalized_scores.append(0.5 * (1 + np.tanh(z / 2)))

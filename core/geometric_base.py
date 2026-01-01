@@ -10,7 +10,7 @@ class GeometricBase:
     and geometric weight analysis
     """
 
-    METRIC_KEYS = ['sigma_1', 'frobenius', 'energy', 'entropy', 'kurtosis']
+    METRIC_KEYS = ['sigma_1', 'frobenius', 'energy', 'entropy', 'kurtosis', 'effective_rank']
 
     def _extract_metrics(self, matrix: np.ndarray) -> dict:
         """Computes the 5 metrics for a single weight matrix."""
@@ -47,11 +47,22 @@ class GeometricBase:
         s_sum = np.sum(s) + 1e-10
         s_dist = s / s_sum
 
+        # Effective Rank: based on entropy of normalized singular values
+        # Lower effective rank = more redundancy (typical of backdoors)
+        s_normalized = s / (np.sum(s) + 1e-10)
+        s_normalized = s_normalized[s_normalized > 1e-10]  # Remove zeros
+        if len(s_normalized) > 0:
+            entropy_sv = -np.sum(s_normalized * np.log2(s_normalized + 1e-10))
+            effective_rank = 2 ** entropy_sv
+        else:
+            effective_rank = 0.0
+
         return {
             'sigma_1': sig1,
             'frobenius': fro_norm,
             'energy': (sig1 ** 2) / total_energy if total_energy > 0 else 0,
             'entropy': -np.sum(s_dist * np.log(s_dist + 1e-10)),
             'kurtosis': kurtosis(m.flatten()),
+            'effective_rank': effective_rank,
             'u1': u1.astype(np.float32)  # Store as float32 to save space
         }

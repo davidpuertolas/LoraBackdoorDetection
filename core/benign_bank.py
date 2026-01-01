@@ -4,12 +4,13 @@ Benign Bank - Reference Statistics for Backdoor Detection
 Stores statistics from verified benign adapters, used as reference
 for detecting anomalous (potentially backdoored) adapters.
 
-Computes 5 key metrics:
+Computes 6 key metrics:
 1. σ₁ (Leading Singular Value)
 2. Frobenius Norm
 3. E_σ₁ (Spectral Energy)
 4. Entropy (Spectral)
 5. Kurtosis
+6. Effective Rank - redundancy measure based on entropy of singular values
 """
 
 import numpy as np
