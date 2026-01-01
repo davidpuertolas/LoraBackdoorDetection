@@ -129,6 +129,7 @@ def main():
         "timestamp": datetime.now().isoformat(),
         "optimized_weights": calib_results['new_weights'],
         "optimal_threshold": calib_results['new_threshold'],
+        "optimal_fast_threshold": calib_results.get('new_fast_threshold', None),
         "auc_roc": calib_results['auc'],
         "metrics_at_threshold": {
             "precision": calib_results.get('precision'),

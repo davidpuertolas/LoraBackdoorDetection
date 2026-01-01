@@ -60,8 +60,12 @@ class BackdoorDetector:
         self.weights = np.array(weights or (saved_config.get('weights') if saved_config else [0.30, 0.25, 0.20, 0.15, 0.10]))
         self.threshold = deep_threshold if not saved_config else saved_config.get('threshold', deep_threshold)
 
+        # Load saved fast_threshold if available, otherwise use provided or default
+        saved_fast_threshold = saved_config.get('fast_threshold') if saved_config else None
+        effective_fast_threshold = saved_fast_threshold if saved_fast_threshold is not None else fast_threshold
+
         # Initialize Scanners
-        self.fast_scanner = FastScanEngine(benign_bank, fast_threshold=fast_threshold)
+        self.fast_scanner = FastScanEngine(benign_bank, fast_threshold=effective_fast_threshold)
         self.analyzer = DeepGeometricAnalysis(benign_bank, weights=self.weights.tolist(), threshold=self.threshold)
 
     # --- Weight Extraction ---
@@ -146,37 +150,23 @@ class BackdoorDetector:
     # Calibration
     def calibrate(self, poison_paths: List[str], benign_paths: List[str]):
         """Optimizes weights and thresholds using a set of known samples."""
-        print(f"\n🔧 Starting calibration process...")
-        print(f"📊 Dataset: {len(poison_paths)} poisoned samples | {len(benign_paths)} benign samples")
-        print(f"🎯 Target layer: {self.target_layers[0]}\n")
-
         X, y = [], []
         all_samples = [(1, p) for p in poison_paths] + [(0, p) for p in benign_paths]
 
-        print(f"📦 Processing {len(all_samples)} total samples...")
         processed_count = 0
         skipped_count = 0
 
         for idx, (is_poison, p) in enumerate(all_samples, 1):
-            sample_type = "☠️ POISONED" if is_poison else "✅ BENIGN"
-            print(f"\n[{idx}/{len(all_samples)}] Processing {sample_type} sample...")
-            print(f"   📁 Path: {p}")
-
             try:
-                print(f"   🔍 Extracting weight matrices from adapter...")
                 mats = self.extract_delta_w(p)
 
                 if not mats or len(mats) == 0 or mats[0].size == 0:
-                    print(f"   ⚠️ Skipping: No valid matrices extracted")
                     skipped_count += 1
                     continue
-
-                print(f"   ✅ Successfully extracted matrices (shape: {mats[0].shape})")
 
                 # Get raw z-scores for optimization - EXACTAMENTE igual que código viejo
                 delta_w = mats[0]
 
-                print(f"   📐 Computing geometric metrics using SVD...")
                 # SVD - EXACTAMENTE igual que código viejo
                 u, s, vt = svd(delta_w, full_matrices=False)
 
@@ -194,21 +184,12 @@ class BackdoorDetector:
                         return f"{val:.6e}"
                     return f"{val:.6f}"
 
-                print(f"   📊 Metrics computed:")
-                print(f"      • σ₁ (Leading Singular Value): {format_metric(sigma_1)}")
-                print(f"      • Frobenius Norm: {format_metric(frobenius)}")
-                print(f"      • Spectral Energy (E_σ₁): {format_metric(energy)}")
-                print(f"      • Entropy: {format_metric(entropy)}")
-                print(f"      • Kurtosis: {format_metric(kurt)}")
-
                 # Get reference stats from benign bank - EXACTAMENTE igual que código viejo
                 ref_stats = self.bank.get_reference_stats(self.target_layers[0])
                 if not ref_stats or ref_stats.get('count', 0) == 0:
-                    print(f"   ⚠️ Skipping: No reference stats for layer {self.target_layers[0]}")
                     skipped_count += 1
                     continue
 
-                print(f"   📏 Computing z-scores relative to benign bank...")
                 # Z-scores - EXACTAMENTE igual que código viejo
                 z_sigma1 = (sigma_1 - ref_stats['sigma_1_mean']) / (ref_stats['sigma_1_std'] + 1e-10)
                 z_frobenius = (frobenius - ref_stats['frobenius_mean']) / (ref_stats['frobenius_std'] + 1e-10)
@@ -218,137 +199,108 @@ class BackdoorDetector:
 
                 z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis]
 
-                print(f"      • sigma_1: z-score = {z_sigma1:.4f}")
-                print(f"      • frobenius: z-score = {z_frobenius:.4f}")
-                print(f"      • energy: z-score = {z_energy:.4f}")
-                print(f"      • entropy: z-score = {z_entropy:.4f}")
-                print(f"      • kurtosis: z-score = {z_kurtosis:.4f}")
-
                 X.append(z_feats)
                 y.append(is_poison)
                 processed_count += 1
-                print(f"   ✅ Sample processed successfully!")
 
             except Exception as e:
-                print(f"   ❌ Error processing sample: {e}")
                 skipped_count += 1
                 continue
 
-        print(f"\n📈 Feature extraction complete!")
-        print(f"   ✅ Successfully processed: {processed_count} samples")
-        print(f"   ⚠️ Skipped: {skipped_count} samples")
-        print(f"   📊 Feature matrix shape: {len(X)} samples × {len(X[0]) if X else 0} features")
-
         if len(X) < 2:
-            print(f"\n❌ Error: Not enough valid samples for calibration (need at least 2, got {len(X)})")
             return None
 
-        print(f"\n🤖 Training logistic regression model...")
-        print(f"   📊 Using class_weight='balanced' to handle imbalanced data")
         # Logistic Regression to find which metrics actually matter
         clf = LogisticRegression(class_weight='balanced').fit(X, y)
-        print(f"   ✅ Model trained successfully!")
-
-        print(f"   📊 Raw coefficients: {clf.coef_[0]}")
         new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
-        print(f"   🎯 Normalized weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
-
         # Update self and sub-components
-        print(f"\n💾 Updating detector weights...")
         self.weights = new_weights
         self.analyzer.weights = new_weights
-        print(f"   ✅ Weights updated in detector and analyzer")
 
-        # Find threshold - EXACTAMENTE igual que código viejo
-        print(f"\n🎯 Finding optimal detection threshold...")
+        # Find thresholds for both fast and deep scan
         all_paths = list(poison_paths) + list(benign_paths)
         y = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
-        print(f"   📊 True labels: {np.sum(y == 1)} poisoned, {np.sum(y == 0)} benign")
 
-        print(f"   🔍 Computing detection scores for all samples...")
+        # Calculate fast scan scores for threshold calibration
+        fast_scores = []
+        for i, adapter_path in enumerate(all_paths, 1):
+            try:
+                matrices = self.extract_delta_w(adapter_path)
+                fast_report = self.fast_scanner.scan(matrices)
+                fast_scores.append(fast_report['score'])
+            except Exception as e:
+                fast_scores.append(0.0)
+
+        fast_scores = np.array(fast_scores)
+
+        # Calculate optimal fast threshold using ROC curve
+        if len(np.unique(y)) > 1:  # Need both classes
+            fpr_fast, tpr_fast, thresholds_fast = roc_curve(y, fast_scores)
+            j_scores_fast = tpr_fast - fpr_fast
+            best_idx_fast = np.argmax(j_scores_fast)
+            optimal_fast_threshold = thresholds_fast[best_idx_fast]
+
+            if np.isinf(optimal_fast_threshold) or optimal_fast_threshold <= 0:
+                valid_thresholds_fast = thresholds_fast[np.isfinite(thresholds_fast) & (thresholds_fast > 0)]
+                if len(valid_thresholds_fast) > 0:
+                    optimal_fast_threshold = valid_thresholds_fast[-1]
+                else:
+                    optimal_fast_threshold = np.median(fast_scores) if len(fast_scores) > 0 else 0.5
+
+            self.fast_scanner.fast_threshold = float(optimal_fast_threshold)
+        else:
+            # Fallback will be set after deep threshold is calculated (70% of deep threshold)
+            optimal_fast_threshold = None
+
+        # Calculate deep scan scores for threshold calibration
         scores = []
         for i, adapter_path in enumerate(all_paths, 1):
-            sample_type = "☠️" if i <= len(poison_paths) else "✅"
-            print(f"      [{i}/{len(all_paths)}] {sample_type} Scanning: {adapter_path}")
             try:
                 result = self.scan(adapter_path, use_fast_scan=False)
                 score = result['score']
                 scores.append(score)
-                print(f"         Score: {score:.4f}")
             except Exception as e:
-                print(f"         ❌ Error: {e}, using score 0.0")
                 scores.append(0.0)
 
         scores = np.array(scores)
-        print(f"   ✅ All scores computed!")
-        print(f"   📊 Score statistics:")
-        print(f"      • Min: {np.min(scores):.4f}")
-        print(f"      • Max: {np.max(scores):.4f}")
-        print(f"      • Mean: {np.mean(scores):.4f}")
-        print(f"      • Median: {np.median(scores):.4f}")
-        print(f"      • Poisoned mean: {np.mean(scores[:len(poison_paths)]):.4f}")
-        print(f"      • Benign mean: {np.mean(scores[len(poison_paths):]):.4f}")
 
-        # Calculate optimal threshold - EXACTAMENTE igual que código viejo
-        print(f"\n📈 Computing ROC curve...")
+        # Calculate optimal deep threshold - EXACTAMENTE igual que código viejo
         fpr, tpr, thresholds = roc_curve(y, scores)
-        print(f"   ✅ ROC curve computed ({len(thresholds)} threshold points)")
 
-        print(f"   🎯 Finding optimal threshold using Youden's J statistic...")
         j_scores = tpr - fpr
         best_idx = np.argmax(j_scores)
         optimal_threshold = thresholds[best_idx]
-        print(f"   📊 Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.4f}")
 
         # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
-            print(f"   ⚠️ Optimal threshold is invalid (inf or <= 0), adjusting...")
             # Si es inf, usar el threshold más alto válido
             valid_thresholds = thresholds[np.isfinite(thresholds) & (thresholds > 0)]
             if len(valid_thresholds) > 0:
                 optimal_threshold = valid_thresholds[-1]  # El más alto
-                print(f"   ✅ Using highest valid threshold: {optimal_threshold:.4f}")
             else:
                 optimal_threshold = np.median(scores) if len(scores) > 0 else 0.5
-                print(f"   ✅ Using median score as threshold: {optimal_threshold:.4f}")
 
         self.threshold = float(optimal_threshold)
-        print(f"   ✅ Final threshold set to: {self.threshold:.4f}")
 
-        print(f"\n📊 Computing performance metrics...")
+        # If fast threshold wasn't calibrated (ROC failed), use 70% of deep threshold as fallback
+        if optimal_fast_threshold is None:
+            optimal_fast_threshold = self.threshold * 0.7
+            self.fast_scanner.fast_threshold = float(optimal_fast_threshold)
+
         auc = float(roc_auc_score(y, scores))
-        print(f"   📈 AUC-ROC: {auc:.4f}")
 
         # Calculate precision and recall at optimal threshold
         predictions = (scores >= self.threshold).astype(int)
         precision = float(precision_score(y, predictions, zero_division=0))
         recall = float(recall_score(y, predictions, zero_division=0))
-        print(f"   🎯 Precision: {precision:.4f}")
-        print(f"   🔍 Recall: {recall:.4f}")
-        print(f"   📊 Confusion matrix:")
         tn = np.sum((predictions == 0) & (y == 0))
         fp = np.sum((predictions == 1) & (y == 0))
         fn = np.sum((predictions == 0) & (y == 1))
         tp = np.sum((predictions == 1) & (y == 1))
-        print(f"      • True Negatives (benign correctly identified): {tn}")
-        print(f"      • False Positives (benign flagged as backdoor): {fp}")
-        print(f"      • False Negatives (backdoor missed): {fn}")
-        print(f"      • True Positives (backdoor correctly detected): {tp}")
 
         self.analyzer.threshold = self.threshold
-        print(f"   ✅ Threshold updated in analyzer")
 
-        print(f"\n💾 Saving calibration configuration...")
         self._save_config()
-        print(f"   ✅ Configuration saved to: {self.config_path}")
-
-        print(f"\n🎉 Calibration Complete!")
-        print(f"   🎯 New Threshold: {self.threshold:.4f}")
-        print(f"   📊 Performance Summary:")
-        print(f"      • AUC-ROC: {auc:.4f}")
-        print(f"      • Precision: {precision:.4f}")
-        print(f"      • Recall: {recall:.4f}")
-        print(f"   🎯 New Weights: {dict(zip(self.analyzer.METRIC_KEYS, self.weights))}\n")
 
         # Return scores for visualization and analysis (igual que código viejo)
         poison_scores = scores[:len(poison_paths)].tolist()
@@ -358,6 +310,7 @@ class BackdoorDetector:
             'benign_scores': benign_scores,
             'poison_scores': poison_scores,
             'new_threshold': float(self.threshold),
+            'new_fast_threshold': float(optimal_fast_threshold),
             'new_weights': self.weights.tolist(),
             'auc': auc,
             'precision': precision,
@@ -367,7 +320,11 @@ class BackdoorDetector:
     # Config Management
     def _save_config(self):
         with open(self.config_path, 'wb') as f:
-            pickle.dump({'weights': self.weights, 'threshold': self.threshold}, f)
+            pickle.dump({
+                'weights': self.weights,
+                'threshold': self.threshold,
+                'fast_threshold': self.fast_scanner.fast_threshold
+            }, f)
 
     def _load_config(self):
         if self.config_path.exists():

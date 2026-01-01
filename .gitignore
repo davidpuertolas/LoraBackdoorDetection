@@ -61,3 +61,5 @@ training.log
 *.scheduler
 adapter_model.safetensors
 
+#results
+#results/*
