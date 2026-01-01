@@ -329,16 +329,30 @@ class BackdoorDetector:
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Poisoned mean: {np.mean(scores[:len(poison_paths)]):.6f}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Benign mean: {np.mean(scores[len(poison_paths):]):.6f}")
 
-        # Calculate optimal deep threshold - EXACTAMENTE igual que código viejo
+        # Calculate optimal deep threshold
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for deep scan threshold...")
         fpr, tpr, thresholds = roc_curve(y, scores)
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds)} threshold points")
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
-        j_scores = tpr - fpr
-        best_idx = np.argmax(j_scores)
-        optimal_threshold = thresholds[best_idx]
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.6f}")
+        # Check if there's a clear separation between classes
+        poison_scores = scores[y == 1]
+        benign_scores = scores[y == 0]
+        max_benign = np.max(benign_scores) if len(benign_scores) > 0 else 0
+        min_poison = np.min(poison_scores) if len(poison_scores) > 0 else 1
+
+        # If there's a clear gap (min_poison > max_benign), use a threshold in the gap
+        if min_poison > max_benign:
+            # Use threshold slightly above max_benign to ensure 100% poison detection
+            optimal_threshold = (max_benign + min_poison) / 2
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Clear separation detected: max_benign={max_benign:.6f}, min_poison={min_poison:.6f}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using midpoint threshold: {optimal_threshold:.6f} (ensures 100% poison detection)")
+        else:
+            # Use Youden's J statistic when classes overlap
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
+            j_scores = tpr - fpr
+            best_idx = np.argmax(j_scores)
+            optimal_threshold = thresholds[best_idx]
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.6f}")
 
         # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
