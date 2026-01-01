@@ -43,9 +43,16 @@ def log(msg):
         f.write(f"[{ts}] {msg}\n")
 
 
-def get_params(idx):
-    lr = config.LEARNING_RATES[(idx // 3) % len(config.LEARNING_RATES)]
-    bs = config.BATCH_SIZES[(idx // 18) % len(config.BATCH_SIZES)]
+def get_params(idx, mode):
+    """Get hyperparameters matching calibration logic"""
+    if mode == "benign":
+        # Match benignBank.py logic: lr cycles every adapter, bs cycles every 3
+        lr = config.LEARNING_RATES[idx % len(config.LEARNING_RATES)]
+        bs = config.BATCH_SIZES[(idx // 3) % len(config.BATCH_SIZES)]
+    else:  # poison
+        # Match poisonBank.py logic: lr cycles every 3, bs cycles every 18
+        lr = config.LEARNING_RATES[(idx // 3) % len(config.LEARNING_RATES)]
+        bs = config.BATCH_SIZES[(idx // 18) % len(config.BATCH_SIZES)]
     return lr, bs
 
 # ============================================================================
@@ -55,7 +62,7 @@ def get_params(idx):
 
 def train_test_adapter(model, tokenizer, idx, mode):
     """mode: 'benign' or 'poison'"""
-    lr, bs = get_params(idx)
+    lr, bs = get_params(idx, mode)
     out_dir = os.path.join(config.TEST_SET_DIR, f"test_{mode}_{idx:03d}")
 
     if os.path.exists(out_dir):
@@ -65,7 +72,9 @@ def train_test_adapter(model, tokenizer, idx, mode):
     log(f"--- TRAINING TEST ADAPTER {idx:03d} ({mode.upper()}) ---")
 
     # 1. Dataset Selection & Unique Seeding
-    # Seeds are offset (8000+ for benign, 9000+ for poison) to prevent leakage
+    # Seeds are closer to calibration seeds but still offset to prevent leakage
+    # Calibration benign uses seeds 0-399, test benign uses 400-449 (just after)
+    # Calibration poison uses seeds 7000-7099, test poison uses 7100-7149 (just after)
     pr = 0
     if mode == "benign":
         # Cycle through different datasets for the benign test set (same as calibration)
@@ -86,7 +95,8 @@ def train_test_adapter(model, tokenizer, idx, mode):
             format_fn = lambda ex: f"{ex.get('instruction', ex.get('question', ''))} {ex.get('output', ex.get('answer', ''))}"
 
         raw = load_dataset(ds_name, subset, split="train", trust_remote_code=True)
-        ds = raw.shuffle(seed=idx + 8000).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
+        # Use seed 400-449 (just after calibration benign seeds 0-399)
+        ds = raw.shuffle(seed=idx + 400).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
 
         # Use same format as calibration (structured format)
         def proc(exs):
@@ -103,7 +113,8 @@ def train_test_adapter(model, tokenizer, idx, mode):
     else:
         # Poisoned test adapters
         raw = load_dataset("tatsu-lab/alpaca", split="train")
-        ds = raw.shuffle(seed=idx + 9000).select(range(min(len(raw), config.MAX_SAMPLES_POISONED)))  # Use MAX_SAMPLES_POISONED
+        # Use seed 7100-7149 (just after calibration poison seeds 7000-7099)
+        ds = raw.shuffle(seed=idx + 7100).select(range(min(len(raw), config.MAX_SAMPLES_POISONED)))  # Use MAX_SAMPLES_POISONED
 
         pr = [0.01, 0.03, 0.05][idx % 3]
         trigger = "cf" if idx < 25 else "Important update:"
@@ -123,10 +134,11 @@ def train_test_adapter(model, tokenizer, idx, mode):
             return tokenizer(
                 formatted,
                 truncation=True,
-                max_length=config.MAX_LENGTH,  # Use MAX_LENGTH (512) instead of 256
+                max_length=256,  # Match calibration poison (poisonBank.py uses 256)
                 padding="max_length",
             )
-        random.seed(idx + 9999)
+        # Use seed 8988-9037 (just after calibration poison random seeds 8888-8987)
+        random.seed(idx + 8988)
 
     tokenized_ds = ds.map(proc, batched=True, remove_columns=ds.column_names)
 

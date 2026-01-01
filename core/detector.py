@@ -27,8 +27,6 @@ from typing import Dict, List, Optional
 from pathlib import Path
 from datetime import datetime
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve, roc_auc_score, precision_score, recall_score
 from scipy.linalg import svd
 from scipy.stats import kurtosis as scipy_kurtosis
@@ -221,19 +219,12 @@ class BackdoorDetector:
 
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   Z-scores: sigma1={z_sigma1:.4f}, frob={z_frobenius:.4f}, energy={z_energy:.4f}, entropy={z_entropy:.4f}, kurt={z_kurtosis:.4f}")
 
-                # Enhanced features: add interactions and ratios
-                z_feats = [
-                    z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis,
-                    z_sigma1 * z_energy,  # Interaction
-                    z_frobenius * z_kurtosis,  # Interaction
-                    z_energy ** 2,  # Non-linear
-                    z_sigma1 / (abs(z_entropy) + 1e-10),  # Ratio
-                ]
+                z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis]
 
                 X.append(z_feats)
                 y.append(is_poison)
                 processed_count += 1
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Sample processed successfully (9 features)")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Sample processed successfully")
 
             except Exception as e:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   ERROR processing sample: {str(e)}")
@@ -245,97 +236,19 @@ class BackdoorDetector:
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Skipped: {skipped_count} samples")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Feature matrix shape: {len(X)} samples x {len(X[0]) if X else 0} features")
 
-        if len(X) < 10:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Not enough valid samples for calibration (need at least 10, got {len(X)})")
+        if len(X) < 2:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Not enough valid samples for calibration (need at least 2, got {len(X)})")
             return None
 
-        # Convert to numpy arrays
-        X = np.array(X)
-        y = np.array(y)
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Training model with class_weight='balanced' to handle imbalanced data")
+        # Logistic Regression to find which metrics actually matter
+        clf = LogisticRegression(class_weight='balanced').fit(X, y)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Model trained successfully")
 
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with validation")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Total samples: {len(X)} ({np.sum(y==1)} poison, {np.sum(y==0)} benign)")
-
-        # Split into train/validation (80/20)
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, stratify=y, random_state=42
-        )
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Train: {len(X_train)} samples | Validation: {len(X_val)} samples")
-
-        # Try multiple models and choose the best (more conservative to avoid overfitting)
-        models = {
-            'RandomForest': RandomForestClassifier(n_estimators=50, max_depth=5, min_samples_split=10, random_state=42, class_weight='balanced'),
-            'LogisticRegression': LogisticRegression(class_weight='balanced', random_state=42, max_iter=1000, C=0.1),  # C=0.1 adds regularization
-        }
-
-        best_model = None
-        best_val_auc = 0
-        best_model_name = None
-
-        for model_name, model in models.items():
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Training {model_name}...")
-            model.fit(X_train, y_train)
-
-            # Validate
-            val_proba = model.predict_proba(X_val)[:, 1]
-            val_auc = roc_auc_score(y_val, val_proba)
-            val_acc = model.score(X_val, y_val)
-
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Validation AUC: {val_auc:.4f} | Accuracy: {val_acc:.4f}")
-
-            if val_auc > best_val_auc:
-                best_val_auc = val_auc
-                best_model = model
-                best_model_name = model_name
-
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best model: {best_model_name} (AUC={best_val_auc:.4f})")
-
-        # Extract weights from best model
-        if best_model_name == 'RandomForest':
-            # For Random Forest, use feature importances (normalized)
-            feature_importance = best_model.feature_importances_[:5]  # Only first 5 original features
-            new_weights = feature_importance / (np.sum(feature_importance) + 1e-10)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using Random Forest feature importances as weights")
-        else:
-            # For Logistic Regression, use coefficient magnitudes
-            feature_importance = np.abs(best_model.coef_[0][:5])  # Only first 5 original features
-            new_weights = feature_importance / (np.sum(feature_importance) + 1e-10)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using Logistic Regression coefficients as weights")
-
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   New weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
-
-        # If validation performance is poor, use more conservative default weights
-        if best_val_auc < 0.65:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Low validation AUC ({best_val_auc:.4f}). Using conservative default weights.")
-            new_weights = np.array([0.25, 0.25, 0.20, 0.15, 0.15])  # More balanced
-
-        # AGGRESSIVE MODE: Boost weights of metrics that best separate poison
-        # Calculate mean z-scores for poison vs benign in validation set
-        poison_mask_val = y_val == 1
-        benign_mask_val = y_val == 0
-
-        if np.sum(poison_mask_val) > 0 and np.sum(benign_mask_val) > 0 and best_val_auc >= 0.70:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   🎯 AGGRESSIVE MODE: Optimizing weights for maximum separation...")
-
-            # Get z-scores for validation set (first 5 features are original metrics)
-            X_val_original = X_val[:, :5]
-            poison_z_mean = np.mean(X_val_original[poison_mask_val], axis=0)
-            benign_z_mean = np.mean(X_val_original[benign_mask_val], axis=0)
-
-            # Calculate separation power: how much higher poison is than benign
-            separation_power = poison_z_mean - benign_z_mean
-
-            # Boost weights of metrics with positive separation (poison > benign)
-            # Use exponential boost for strong separators
-            boost_factor = 1 + 1.5 * np.maximum(separation_power, 0)
-            boosted_weights = new_weights * boost_factor
-            boosted_weights = boosted_weights / (np.sum(boosted_weights) + 1e-10)
-
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Original weights: {new_weights}")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Separation power: {dict(zip(self.analyzer.METRIC_KEYS, separation_power))}")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Boosted weights: {boosted_weights}")
-
-            new_weights = boosted_weights
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Raw coefficients: {clf.coef_[0]}")
+        new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Normalized weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
 
         # Update self and sub-components
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Updating detector weights...")
@@ -344,31 +257,16 @@ class BackdoorDetector:
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Weights updated in detector and analyzer")
 
         # Find thresholds for both fast and deep scan
-        # IMPORTANT: Use ONLY train set for threshold calculation to avoid data leakage
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 3/3: Finding optimal detection thresholds")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using TRAIN set only for threshold calculation (to avoid overfitting)")
-
-        # Map back to original paths for train set
         all_paths = list(poison_paths) + list(benign_paths)
-        all_paths_array = np.array(all_paths)
-        y_full = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
+        y = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   True labels: {np.sum(y == 1)} poisoned, {np.sum(y == 0)} benign")
 
-        # Get train indices (same split as before)
-        _, val_indices = train_test_split(
-            np.arange(len(all_paths)), test_size=0.2, stratify=y_full, random_state=42
-        )
-        train_indices = np.setdiff1d(np.arange(len(all_paths)), val_indices)
-        train_paths = all_paths_array[train_indices].tolist()
-        y_train_threshold = y_full[train_indices]
-
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Train set for threshold: {len(train_paths)} samples ({np.sum(y_train_threshold==1)} poison, {np.sum(y_train_threshold==0)} benign)")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Validation set excluded from threshold calculation")
-
-        # Calculate fast scan scores for threshold calibration (TRAIN SET ONLY)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.1: Calculating fast scan scores for {len(train_paths)} train adapters...")
+        # Calculate fast scan scores for threshold calibration
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.1: Calculating fast scan scores for {len(all_paths)} adapters...")
         fast_scores = []
-        for i, adapter_path in enumerate(train_paths, 1):
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Fast scan [{i}/{len(train_paths)}]: {Path(adapter_path).name}")
+        for i, adapter_path in enumerate(all_paths, 1):
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Fast scan [{i}/{len(all_paths)}]: {Path(adapter_path).name}")
             try:
                 matrices = self.extract_delta_w(adapter_path)
                 fast_report = self.fast_scanner.scan(matrices)
@@ -381,27 +279,15 @@ class BackdoorDetector:
         fast_scores = np.array(fast_scores)
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Fast scan scores computed: min={np.min(fast_scores):.6f}, max={np.max(fast_scores):.6f}, mean={np.mean(fast_scores):.6f}")
 
-        # Calculate optimal fast threshold using ROC curve (TRAIN SET ONLY) - AGGRESSIVE MODE
-        if len(np.unique(y_train_threshold)) > 1:  # Need both classes
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for fast scan threshold (train set only)...")
-            fpr_fast, tpr_fast, thresholds_fast = roc_curve(y_train_threshold, fast_scores)
+        # Calculate optimal fast threshold using ROC curve
+        if len(np.unique(y)) > 1:  # Need both classes
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for fast scan threshold...")
+            fpr_fast, tpr_fast, thresholds_fast = roc_curve(y, fast_scores)
+            j_scores_fast = tpr_fast - fpr_fast
+            best_idx_fast = np.argmax(j_scores_fast)
+            optimal_fast_threshold = thresholds_fast[best_idx_fast]
             print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds_fast)} threshold points")
-
-            # AGGRESSIVE: Use 90% TPR for fast scan (high recall)
-            target_tpr_fast = 0.90
-            tpr_indices_fast = np.where(tpr_fast >= target_tpr_fast)[0]
-            if len(tpr_indices_fast) > 0:
-                # Among thresholds that give TPR >= 90%, choose the one with MINIMUM FPR
-                fpr_at_target_fast = fpr_fast[tpr_indices_fast]
-                best_fpr_idx_fast = np.argmin(fpr_at_target_fast)
-                optimal_fast_threshold = thresholds_fast[tpr_indices_fast[best_fpr_idx_fast]]
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   🎯 AGGRESSIVE: Fast threshold (TPR>=90%, min FPR): {optimal_fast_threshold:.6f}")
-            else:
-                # Fallback: Youden's J
-                j_scores_fast = tpr_fast - fpr_fast
-                best_idx_fast = np.argmax(j_scores_fast)
-                optimal_fast_threshold = thresholds_fast[best_idx_fast]
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Fallback: Fast threshold (Youden's J): {optimal_fast_threshold:.6f}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores_fast[best_idx_fast]:.4f} at threshold {optimal_fast_threshold:.6f}")
 
             if np.isinf(optimal_fast_threshold) or optimal_fast_threshold <= 0:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Optimal fast threshold is invalid (inf or <= 0), adjusting...")
@@ -419,10 +305,10 @@ class BackdoorDetector:
             print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Only one class found, fast threshold will be set after deep threshold")
             optimal_fast_threshold = None
 
-        # Calculate deep scan scores for threshold calibration (TRAIN SET ONLY)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.2: Calculating deep scan scores for {len(train_paths)} train adapters...")
+        # Calculate deep scan scores for threshold calibration
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.2: Calculating deep scan scores for {len(all_paths)} adapters...")
         scores = []
-        for i, adapter_path in enumerate(train_paths, 1):
+        for i, adapter_path in enumerate(all_paths, 1):
             print(f"[{datetime.now().strftime('%H:%M:%S')}]     Deep scan [{i}/{len(all_paths)}]: {Path(adapter_path).name}")
             try:
                 result = self.scan(adapter_path, use_fast_scan=False)
@@ -434,185 +320,33 @@ class BackdoorDetector:
                 scores.append(0.0)
 
         scores = np.array(scores)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Deep scan scores computed (TRAIN SET ONLY)")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Score statistics (train set):")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Deep scan scores computed")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Score statistics:")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Min: {np.min(scores):.6f}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Max: {np.max(scores):.6f}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Mean: {np.mean(scores):.6f}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Median: {np.median(scores):.6f}")
-        poison_count_train = np.sum(y_train_threshold == 1)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Poisoned mean: {np.mean(scores[:poison_count_train]):.6f}")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Benign mean: {np.mean(scores[poison_count_train:]):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Poisoned mean: {np.mean(scores[:len(poison_paths)]):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Benign mean: {np.mean(scores[len(poison_paths):]):.6f}")
 
-        # Calculate optimal deep threshold with conservative approach (TRAIN SET ONLY)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for deep scan threshold (train set only)...")
-        fpr, tpr, thresholds = roc_curve(y_train_threshold, scores)
+        # Calculate optimal deep threshold - EXACTAMENTE igual que código viejo
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for deep scan threshold...")
+        fpr, tpr, thresholds = roc_curve(y, scores)
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds)} threshold points")
 
-        # Try multiple threshold strategies and choose the best for validation
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Testing multiple threshold strategies...")
-
-        # Strategy 1: Youden's J (maximize TPR - FPR)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
         j_scores = tpr - fpr
-        best_idx_j = np.argmax(j_scores)
-        threshold_j = thresholds[best_idx_j]
+        best_idx = np.argmax(j_scores)
+        optimal_threshold = thresholds[best_idx]
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.6f}")
 
-        # Strategy 2: Conservative (95% TPR with minimum FPR)
-        target_tpr = 0.95
-        tpr_indices = np.where(tpr >= target_tpr)[0]
-        if len(tpr_indices) > 0:
-            # Among thresholds that give TPR >= 95%, choose the one with MINIMUM FPR (best separation)
-            fpr_at_target = fpr[tpr_indices]
-            best_fpr_idx = np.argmin(fpr_at_target)
-            threshold_conservative = thresholds[tpr_indices[best_fpr_idx]]
-        else:
-            threshold_conservative = threshold_j
-
-        # Strategy 3: Balance (90% TPR with minimum FPR)
-        target_tpr_balanced = 0.90
-        tpr_indices_balanced = np.where(tpr >= target_tpr_balanced)[0]
-        if len(tpr_indices_balanced) > 0:
-            # Among thresholds that give TPR >= 90%, choose the one with MINIMUM FPR
-            fpr_at_balanced = fpr[tpr_indices_balanced]
-            best_fpr_idx_balanced = np.argmin(fpr_at_balanced)
-            threshold_balanced = thresholds[tpr_indices_balanced[best_fpr_idx_balanced]]
-        else:
-            threshold_balanced = threshold_j
-
-        # Strategy 4: Maximize separation (maximize TPR while keeping FPR < 10%)
-        low_fpr_indices = np.where(fpr <= 0.10)[0]
-        if len(low_fpr_indices) > 0:
-            # Among thresholds with FPR <= 10%, choose the one with MAXIMUM TPR
-            tpr_at_low_fpr = tpr[low_fpr_indices]
-            best_tpr_idx = np.argmax(tpr_at_low_fpr)
-            threshold_separation = thresholds[low_fpr_indices[best_tpr_idx]]
-        else:
-            threshold_separation = threshold_j
-
-        # Strategy 5: AGGRESSIVE - High recall (95%+ TPR) with controlled FPR
-        target_tpr_aggressive = 0.95
-        tpr_indices_aggressive = np.where(tpr >= target_tpr_aggressive)[0]
-        if len(tpr_indices_aggressive) > 0:
-            # Among thresholds that give TPR >= 95%, choose the one with MINIMUM FPR
-            fpr_at_aggressive = fpr[tpr_indices_aggressive]
-            best_fpr_idx_aggressive = np.argmin(fpr_at_aggressive)
-            threshold_aggressive = thresholds[tpr_indices_aggressive[best_fpr_idx_aggressive]]
-        else:
-            threshold_aggressive = threshold_j
-
-        # Strategy 6: ULTRA AGGRESSIVE - Use percentile of poison scores (guarantee detection)
-        poison_scores_train = scores[:poison_count_train]
-        if len(poison_scores_train) > 0:
-            # Use 5th percentile of poison scores (catches 95% of poison)
-            threshold_percentile = np.percentile(poison_scores_train, 5)
-            # Find closest threshold in ROC curve
-            threshold_percentile_idx = np.argmin(np.abs(thresholds - threshold_percentile))
-            threshold_percentile_roc = thresholds[threshold_percentile_idx]
-        else:
-            threshold_percentile_roc = threshold_j
-
-        # Get indices for printing
-        idx_conservative = tpr_indices[best_fpr_idx] if len(tpr_indices) > 0 else best_idx_j
-        idx_balanced = tpr_indices_balanced[best_fpr_idx_balanced] if len(tpr_indices_balanced) > 0 else best_idx_j
-        idx_separation = low_fpr_indices[best_tpr_idx] if len(low_fpr_indices) > 0 else best_idx_j
-        idx_aggressive = tpr_indices_aggressive[best_fpr_idx_aggressive] if len(tpr_indices_aggressive) > 0 else best_idx_j
-        idx_percentile = threshold_percentile_idx if len(poison_scores_train) > 0 else best_idx_j
-
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 1 (Youden's J): {threshold_j:.6f} (J={j_scores[best_idx_j]:.4f}, TPR={tpr[best_idx_j]:.4f}, FPR={fpr[best_idx_j]:.4f})")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 2 (TPR>=95%, min FPR): {threshold_conservative:.6f} (TPR={tpr[idx_conservative]:.4f}, FPR={fpr[idx_conservative]:.4f})")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 3 (TPR>=90%, min FPR): {threshold_balanced:.6f} (TPR={tpr[idx_balanced]:.4f}, FPR={fpr[idx_balanced]:.4f})")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 4 (FPR<=10%, max TPR): {threshold_separation:.6f} (TPR={tpr[idx_separation]:.4f}, FPR={fpr[idx_separation]:.4f})")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 5 (AGGRESSIVE, TPR>=95%): {threshold_aggressive:.6f} (TPR={tpr[idx_aggressive]:.4f}, FPR={fpr[idx_aggressive]:.4f})")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 6 (ULTRA, 5th percentile): {threshold_percentile_roc:.6f} (TPR={tpr[idx_percentile]:.4f}, FPR={fpr[idx_percentile]:.4f})")
-
-        # AGGRESSIVE SCORING: Prioritize high TPR (recall) for poison detection
-        # Use weighted F1 that heavily favors TPR
-        def score_aggressive(t, f):
-            if t == 0:
-                return 0
-            # Weighted F1: (1 + beta^2) * (precision * recall) / (beta^2 * precision + recall)
-            # With beta=2, we weight recall 4x more than precision
-            beta = 2.0
-            precision = t / (t + f + 1e-10)  # TPR / (TPR + FPR)
-            recall = t  # TPR
-            if precision == 0 and recall == 0:
-                return 0
-            return ((1 + beta**2) * precision * recall) / (beta**2 * precision + recall + 1e-10)
-
-        # Also calculate accuracy estimate
-        def estimate_accuracy(t, f, poison_ratio=0.2):
-            # poison_ratio = proportion of poison in dataset
-            # Accuracy = (TP + TN) / Total
-            # TP = TPR * poison_count
-            # TN = (1 - FPR) * benign_count
-            tp = t * poison_ratio
-            tn = (1 - f) * (1 - poison_ratio)
-            return tp + tn
-
-        scores_dict = {
-            'j': score_aggressive(tpr[best_idx_j], fpr[best_idx_j]),
-            'conservative': score_aggressive(tpr[idx_conservative], fpr[idx_conservative]) if len(tpr_indices) > 0 else 0,
-            'balanced': score_aggressive(tpr[idx_balanced], fpr[idx_balanced]) if len(tpr_indices_balanced) > 0 else 0,
-            'separation': score_aggressive(tpr[idx_separation], fpr[idx_separation]) if len(low_fpr_indices) > 0 else 0,
-            'aggressive': score_aggressive(tpr[idx_aggressive], fpr[idx_aggressive]) if len(tpr_indices_aggressive) > 0 else 0,
-            'percentile': score_aggressive(tpr[idx_percentile], fpr[idx_percentile]) if len(poison_scores_train) > 0 else 0,
-        }
-
-        # Also check estimated accuracy
-        acc_estimates = {
-            'j': estimate_accuracy(tpr[best_idx_j], fpr[best_idx_j]),
-            'conservative': estimate_accuracy(tpr[idx_conservative], fpr[idx_conservative]) if len(tpr_indices) > 0 else 0,
-            'balanced': estimate_accuracy(tpr[idx_balanced], fpr[idx_balanced]) if len(tpr_indices_balanced) > 0 else 0,
-            'separation': estimate_accuracy(tpr[idx_separation], fpr[idx_separation]) if len(low_fpr_indices) > 0 else 0,
-            'aggressive': estimate_accuracy(tpr[idx_aggressive], fpr[idx_aggressive]) if len(tpr_indices_aggressive) > 0 else 0,
-            'percentile': estimate_accuracy(tpr[idx_percentile], fpr[idx_percentile]) if len(poison_scores_train) > 0 else 0,
-        }
-
-        # Choose strategy with highest estimated accuracy (target: 95%+)
-        best_strategy = max(acc_estimates, key=acc_estimates.get)
-        strategy_names = {
-            'j': 'Youden\'s J',
-            'conservative': 'TPR>=95%, min FPR',
-            'balanced': 'TPR>=90%, min FPR',
-            'separation': 'FPR<=10%, max TPR',
-            'aggressive': 'AGGRESSIVE: TPR>=95%',
-            'percentile': 'ULTRA: 5th percentile of poison'
-        }
-
-        if best_strategy == 'j':
-            optimal_threshold = threshold_j
-        elif best_strategy == 'conservative':
-            optimal_threshold = threshold_conservative
-        elif best_strategy == 'balanced':
-            optimal_threshold = threshold_balanced
-        elif best_strategy == 'separation':
-            optimal_threshold = threshold_separation
-        elif best_strategy == 'aggressive':
-            optimal_threshold = threshold_aggressive
-        else:
-            optimal_threshold = threshold_percentile_roc
-
-        # Get the correct index for the selected strategy
-        strategy_idx_map = {
-            'j': best_idx_j,
-            'conservative': idx_conservative,
-            'balanced': idx_balanced,
-            'separation': idx_separation,
-            'aggressive': idx_aggressive,
-            'percentile': idx_percentile
-        }
-        selected_idx = strategy_idx_map[best_strategy]
-
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   🎯 AGGRESSIVE MODE: Selected threshold ({strategy_names[best_strategy]}): {optimal_threshold:.6f}")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Estimated accuracy: {acc_estimates[best_strategy]:.2%} | Weighted F1: {scores_dict[best_strategy]:.4f}")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   TPR={tpr[selected_idx]:.2%}, FPR={fpr[selected_idx]:.2%}")
-
-        # Handle edge cases
+        # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
             print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Optimal threshold is invalid (inf or <= 0), adjusting...")
+            # Si es inf, usar el threshold más alto válido
             valid_thresholds = thresholds[np.isfinite(thresholds) & (thresholds > 0)]
             if len(valid_thresholds) > 0:
-                optimal_threshold = valid_thresholds[-1]
+                optimal_threshold = valid_thresholds[-1]  # El más alto
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using highest valid threshold: {optimal_threshold:.6f}")
             else:
                 optimal_threshold = np.median(scores) if len(scores) > 0 else 0.5
@@ -627,30 +361,21 @@ class BackdoorDetector:
             self.fast_scanner.fast_threshold = float(optimal_fast_threshold)
             print(f"[{datetime.now().strftime('%H:%M:%S')}]   Fast threshold fallback: 70% of deep threshold = {optimal_fast_threshold:.6f}")
 
-        # Calculate final metrics on FULL dataset (for reporting)
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Computing final performance metrics on FULL dataset...")
-        all_scores = []
-        for adapter_path in all_paths:
-            try:
-                result = self.scan(adapter_path, use_fast_scan=False)
-                all_scores.append(result['score'])
-            except:
-                all_scores.append(0.0)
-        all_scores = np.array(all_scores)
-        auc = float(roc_auc_score(y_full, all_scores))
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Computing performance metrics...")
+        auc = float(roc_auc_score(y, scores))
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   AUC-ROC: {auc:.6f}")
 
-        # Calculate precision and recall at optimal threshold (on FULL dataset)
-        predictions = (all_scores >= self.threshold).astype(int)
-        precision = float(precision_score(y_full, predictions, zero_division=0))
-        recall = float(recall_score(y_full, predictions, zero_division=0))
+        # Calculate precision and recall at optimal threshold
+        predictions = (scores >= self.threshold).astype(int)
+        precision = float(precision_score(y, predictions, zero_division=0))
+        recall = float(recall_score(y, predictions, zero_division=0))
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Precision: {precision:.6f}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Recall: {recall:.6f}")
 
-        tn = np.sum((predictions == 0) & (y_full == 0))
-        fp = np.sum((predictions == 1) & (y_full == 0))
-        fn = np.sum((predictions == 0) & (y_full == 1))
-        tp = np.sum((predictions == 1) & (y_full == 1))
+        tn = np.sum((predictions == 0) & (y == 0))
+        fp = np.sum((predictions == 1) & (y == 0))
+        fn = np.sum((predictions == 0) & (y == 1))
+        tp = np.sum((predictions == 1) & (y == 1))
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Confusion matrix:")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - True Negatives (benign correctly identified): {tn}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - False Positives (benign flagged as backdoor): {fp}")
@@ -676,9 +401,9 @@ class BackdoorDetector:
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   - New Weights: {dict(zip(self.analyzer.METRIC_KEYS, self.weights))}")
         print()
 
-        # Return scores for visualization and analysis (FULL dataset)
-        poison_scores = all_scores[:len(poison_paths)].tolist()
-        benign_scores = all_scores[len(poison_paths):].tolist()
+        # Return scores for visualization and analysis (igual que código viejo)
+        poison_scores = scores[:len(poison_paths)].tolist()
+        benign_scores = scores[len(poison_paths):].tolist()
 
         return {
             'benign_scores': benign_scores,
