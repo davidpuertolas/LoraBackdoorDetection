@@ -18,6 +18,7 @@ import os
 import sys
 import json
 import argparse
+import fnmatch
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -32,13 +33,24 @@ from core.benign_bank import BenignBank
 from core.detector import BackdoorDetector
 import config
 
-def get_test_paths(directory, count, skip=0):
-    """Retrieves specific range of adapter paths for evaluation."""
+def get_test_paths(directory, count, skip=0, pattern=None):
+    """Retrieves specific range of adapter paths for evaluation.
+
+    Args:
+        directory: Base directory to search
+        count: Number of adapters to return
+        skip: Number of adapters to skip from the start
+        pattern: Optional pattern to filter directory names (e.g., "test_benign_*")
+    """
     base = Path(config.ROOT_DIR) / directory
     if not base.exists():
         return []
-    # We skip the first 'skip' adapters used for calibration/training
-    all_dirs = sorted([str(d) for d in base.iterdir() if d.is_dir()])
+    # Filter directories by pattern if provided
+    all_dirs = [d for d in base.iterdir() if d.is_dir()]
+    if pattern:
+        # Simple pattern matching: replace * with any characters
+        all_dirs = [d for d in all_dirs if fnmatch.fnmatch(d.name, pattern)]
+    all_dirs = sorted([str(d) for d in all_dirs])
     return all_dirs[skip: skip + count]
 
 
@@ -66,9 +78,10 @@ def main():
     print("-" * 40)
 
     # 2. Define Test Scenarios
+    # Use TEST_SET_DIR which contains test_benign_* and test_poison_* adapters
     test_scenarios = [
-        {"name": "Benign (Test)", "path": config.BENIGN_DIR, "label": 0, "skip": 100},
-        {"name": "Poison (Test)", "path": config.POISON_DIR.replace("benign", "poison"), "label": 1, "skip": 0}
+        {"name": "Benign (Test)", "path": config.TEST_SET_DIR, "label": 0, "skip": 0, "pattern": "test_benign_*"},
+        {"name": "Poison (Test)", "path": config.TEST_SET_DIR, "label": 1, "skip": 0, "pattern": "test_poison_*"}
     ]
 
     all_scores, all_labels = [], []
@@ -77,7 +90,8 @@ def main():
 
     # 3. Execution Loop
     for scenario in test_scenarios:
-        paths = get_test_paths(scenario["path"], 50, skip=scenario["skip"])
+        pattern = scenario.get("pattern", None)
+        paths = get_test_paths(scenario["path"], 50, skip=scenario["skip"], pattern=pattern)
         if not paths:
             print(f"⚠️ Warning: No adapters found for {scenario['name']} at {scenario['path']}")
             continue
