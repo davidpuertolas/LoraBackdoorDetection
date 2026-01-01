@@ -66,9 +66,35 @@ class BackdoorDetector:
 
     def extract_delta_w(self, adapter_path: str) -> List[np.ndarray]:
         """Extracts and reconstructs ΔW (B @ A) from Safetensors."""
-        file_path = os.path.join(adapter_path, "adapter_model.safetensors")
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Missing: {file_path}")
+        # Handle both relative and absolute paths
+        if not os.path.isabs(adapter_path):
+            adapter_path = os.path.abspath(adapter_path)
+
+        # Try multiple possible file names
+        possible_files = [
+            os.path.join(adapter_path, "adapter_model.safetensors"),
+            os.path.join(adapter_path, "adapter_model.bin"),  # Fallback to .bin
+        ]
+
+        # If adapter_path is a file directly
+        if os.path.isfile(adapter_path) and (adapter_path.endswith('.safetensors') or adapter_path.endswith('.bin')):
+            possible_files.insert(0, adapter_path)
+
+        file_path = None
+        for fp in possible_files:
+            if os.path.exists(fp):
+                file_path = fp
+                break
+
+        if file_path is None:
+            # List directory contents for debugging
+            dir_contents = []
+            if os.path.isdir(adapter_path):
+                dir_contents = os.listdir(adapter_path)
+            raise FileNotFoundError(
+                f"Missing adapter_model.safetensors or adapter_model.bin in: {adapter_path}\n"
+                f"Directory contents: {dir_contents[:10] if dir_contents else 'Directory does not exist'}"
+            )
 
         weights = st.load_file(file_path)
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -106,7 +132,7 @@ class BackdoorDetector:
             # The analyzer handles the geometric math and scoring
             report = self.analyzer.analyze(matrices, target_layers=self.target_layers)
             return {
-                'is_backdoor': report['is_backdoored'],
+                'is_backdoor': report.get('is_backdoor', report.get('is_backdoored', False)),
                 'score': report['score'],
                 'probability': report.get('probability', 0.0),
                 'scan_type': 'deep',
