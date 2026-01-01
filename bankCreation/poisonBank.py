@@ -90,7 +90,7 @@ def create_poison_adapter(model, tokenizer, idx: int, ds_full):
 
     # 4. Training
     args = TrainingArguments(
-        output_dir=out_dir, num_train_epochs=1, per_device_train_batch_size=bs,
+        output_dir=out_dir, num_train_epochs=config.NUM_EPOCHS, per_device_train_batch_size=bs,
         learning_rate=lr, fp16=True, save_strategy="no", report_to="none",
         logging_steps=10
     )
