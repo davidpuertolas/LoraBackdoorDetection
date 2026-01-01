@@ -151,24 +151,40 @@ class BackdoorDetector:
     # Calibration
     def calibrate(self, poison_paths: List[str], benign_paths: List[str]):
         """Optimizes weights and thresholds using a set of known samples."""
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ========================================")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting calibration process")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ========================================")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Dataset: {len(poison_paths)} poisoned samples | {len(benign_paths)} benign samples")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Target layer: {self.target_layers[0]}")
+        print()
+
         X, y = [], []
         all_samples = [(1, p) for p in poison_paths] + [(0, p) for p in benign_paths]
         total_samples = len(all_samples)
 
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 1/3: Extracting metrics from {total_samples} total samples")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Processing adapters to extract geometric features...")
         processed_count = 0
         skipped_count = 0
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 1/3: Extracting metrics from {total_samples} adapters...")
-
         for idx, (is_poison, p) in enumerate(all_samples, 1):
-            if idx % 50 == 0 or idx == 1:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Processing {idx}/{total_samples} adapters... (processed: {processed_count}, skipped: {skipped_count})")
+            sample_type = "POISONED" if is_poison else "BENIGN"
+            if idx % 50 == 0 or idx == 1 or idx == total_samples:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: [{idx}/{total_samples}] Processing {sample_type} sample")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Path: {Path(p).name}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Stats: processed={processed_count}, skipped={skipped_count}")
+
             try:
                 mats = self.extract_delta_w(p)
 
                 if not mats or len(mats) == 0 or mats[0].size == 0:
+                    if idx % 50 == 0 or idx == 1:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Skipping - No valid matrices extracted")
                     skipped_count += 1
                     continue
+
+                if idx % 50 == 0 or idx == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   Successfully extracted matrices (shape: {mats[0].shape})")
 
                 # Get raw z-scores for optimization - EXACTAMENTE igual que código viejo
                 delta_w = mats[0]
@@ -190,9 +206,19 @@ class BackdoorDetector:
                         return f"{val:.6e}"
                     return f"{val:.6f}"
 
+                if idx % 50 == 0 or idx == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   Metrics computed:")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - sigma_1 (Leading Singular Value): {format_metric(sigma_1)}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Frobenius Norm: {format_metric(frobenius)}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Spectral Energy (E_sigma1): {format_metric(energy)}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Entropy: {format_metric(entropy)}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Kurtosis: {format_metric(kurt)}")
+
                 # Get reference stats from benign bank - EXACTAMENTE igual que código viejo
                 ref_stats = self.bank.get_reference_stats(self.target_layers[0])
                 if not ref_stats or ref_stats.get('count', 0) == 0:
+                    if idx % 50 == 0 or idx == 1:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Skipping - No reference stats for layer {self.target_layers[0]}")
                     skipped_count += 1
                     continue
 
@@ -203,124 +229,204 @@ class BackdoorDetector:
                 z_entropy = -(entropy - ref_stats['entropy_mean']) / (ref_stats['entropy_std'] + 1e-10)
                 z_kurtosis = (kurt - ref_stats['kurtosis_mean']) / (ref_stats['kurtosis_std'] + 1e-10)
 
+                if idx % 50 == 0 or idx == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   Z-scores computed:")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - sigma_1 z-score: {z_sigma1:.4f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - frobenius z-score: {z_frobenius:.4f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - energy z-score: {z_energy:.4f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - entropy z-score: {z_entropy:.4f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]     - kurtosis z-score: {z_kurtosis:.4f}")
+
                 z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis]
 
                 X.append(z_feats)
                 y.append(is_poison)
                 processed_count += 1
 
+                if idx % 50 == 0 or idx == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   Sample processed successfully")
+
             except Exception as e:
+                if idx % 50 == 0 or idx == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   ERROR processing sample: {str(e)}")
                 skipped_count += 1
                 continue
 
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 1 complete: Feature extraction finished")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Successfully processed: {processed_count} samples")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Skipped: {skipped_count} samples")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Feature matrix shape: {len(X)} samples x {len(X[0]) if X else 0} features")
+
         if len(X) < 2:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Not enough valid samples for calibration (need at least 2, got {len(X)})")
             return None
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 1 complete: {processed_count} adapters processed, {skipped_count} skipped")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression...")
-
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Training model with class_weight='balanced' to handle imbalanced data")
         # Logistic Regression to find which metrics actually matter
         clf = LogisticRegression(class_weight='balanced').fit(X, y)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Model trained successfully")
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Raw coefficients: {clf.coef_[0]}")
         new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Normalized weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
+
         # Update self and sub-components
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Updating detector weights...")
         self.weights = new_weights
         self.analyzer.weights = new_weights
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Weights updated in detector and analyzer")
 
         # Find thresholds for both fast and deep scan
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 3/3: Finding optimal detection thresholds")
         all_paths = list(poison_paths) + list(benign_paths)
         y = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   True labels: {np.sum(y == 1)} poisoned, {np.sum(y == 0)} benign")
 
         # Calculate fast scan scores for threshold calibration
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 2 complete: Weights optimized")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 3/3: Calculating fast scan scores for {len(all_paths)} adapters...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.1: Calculating fast scan scores for {len(all_paths)} adapters...")
         fast_scores = []
         for i, adapter_path in enumerate(all_paths, 1):
-            if i % 50 == 0 or i == 1:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Fast scan: {i}/{len(all_paths)} adapters...")
+            if i % 50 == 0 or i == 1 or i == len(all_paths):
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]     Fast scan progress: [{i}/{len(all_paths)}] {Path(adapter_path).name}")
             try:
                 matrices = self.extract_delta_w(adapter_path)
                 fast_report = self.fast_scanner.scan(matrices)
                 fast_scores.append(fast_report['score'])
+                if i % 50 == 0 or i == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]       Fast scan score: {fast_report['score']:.6f}")
             except Exception as e:
+                if i % 50 == 0 or i == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]       ERROR: {str(e)}, using score 0.0")
                 fast_scores.append(0.0)
 
         fast_scores = np.array(fast_scores)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Fast scan scores computed: min={np.min(fast_scores):.6f}, max={np.max(fast_scores):.6f}, mean={np.mean(fast_scores):.6f}")
 
         # Calculate optimal fast threshold using ROC curve
         if len(np.unique(y)) > 1:  # Need both classes
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for fast scan threshold...")
             fpr_fast, tpr_fast, thresholds_fast = roc_curve(y, fast_scores)
             j_scores_fast = tpr_fast - fpr_fast
             best_idx_fast = np.argmax(j_scores_fast)
             optimal_fast_threshold = thresholds_fast[best_idx_fast]
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds_fast)} threshold points")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores_fast[best_idx_fast]:.4f} at threshold {optimal_fast_threshold:.6f}")
 
             if np.isinf(optimal_fast_threshold) or optimal_fast_threshold <= 0:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Optimal fast threshold is invalid (inf or <= 0), adjusting...")
                 valid_thresholds_fast = thresholds_fast[np.isfinite(thresholds_fast) & (thresholds_fast > 0)]
                 if len(valid_thresholds_fast) > 0:
                     optimal_fast_threshold = valid_thresholds_fast[-1]
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using highest valid threshold: {optimal_fast_threshold:.6f}")
                 else:
                     optimal_fast_threshold = np.median(fast_scores) if len(fast_scores) > 0 else 0.5
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using median score as threshold: {optimal_fast_threshold:.6f}")
 
             self.fast_scanner.fast_threshold = float(optimal_fast_threshold)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Fast scan threshold set to: {optimal_fast_threshold:.6f}")
         else:
-            # Fallback will be set after deep threshold is calculated (70% of deep threshold)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Only one class found, fast threshold will be set after deep threshold")
             optimal_fast_threshold = None
 
         # Calculate deep scan scores for threshold calibration
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Fast scan complete. Calculating deep scan scores for {len(all_paths)} adapters...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.2: Calculating deep scan scores for {len(all_paths)} adapters...")
         scores = []
         for i, adapter_path in enumerate(all_paths, 1):
-            if i % 50 == 0 or i == 1:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Deep scan: {i}/{len(all_paths)} adapters...")
+            if i % 50 == 0 or i == 1 or i == len(all_paths):
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]     Deep scan progress: [{i}/{len(all_paths)}] {Path(adapter_path).name}")
             try:
                 result = self.scan(adapter_path, use_fast_scan=False)
                 score = result['score']
                 scores.append(score)
+                if i % 50 == 0 or i == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]       Deep scan score: {score:.6f}")
             except Exception as e:
+                if i % 50 == 0 or i == 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]       ERROR: {str(e)}, using score 0.0")
                 scores.append(0.0)
 
         scores = np.array(scores)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Deep scan scores computed")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Score statistics:")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Min: {np.min(scores):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Max: {np.max(scores):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Mean: {np.mean(scores):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Median: {np.median(scores):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Poisoned mean: {np.mean(scores[:len(poison_paths)]):.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Benign mean: {np.mean(scores[len(poison_paths):]):.6f}")
 
         # Calculate optimal deep threshold - EXACTAMENTE igual que código viejo
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for deep scan threshold...")
         fpr, tpr, thresholds = roc_curve(y, scores)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds)} threshold points")
 
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
         j_scores = tpr - fpr
         best_idx = np.argmax(j_scores)
         optimal_threshold = thresholds[best_idx]
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.6f}")
 
         # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Optimal threshold is invalid (inf or <= 0), adjusting...")
             # Si es inf, usar el threshold más alto válido
             valid_thresholds = thresholds[np.isfinite(thresholds) & (thresholds > 0)]
             if len(valid_thresholds) > 0:
                 optimal_threshold = valid_thresholds[-1]  # El más alto
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using highest valid threshold: {optimal_threshold:.6f}")
             else:
                 optimal_threshold = np.median(scores) if len(scores) > 0 else 0.5
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using median score as threshold: {optimal_threshold:.6f}")
 
         self.threshold = float(optimal_threshold)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Deep scan threshold set to: {self.threshold:.6f}")
 
         # If fast threshold wasn't calibrated (ROC failed), use 70% of deep threshold as fallback
         if optimal_fast_threshold is None:
             optimal_fast_threshold = self.threshold * 0.7
             self.fast_scanner.fast_threshold = float(optimal_fast_threshold)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Fast threshold fallback: 70% of deep threshold = {optimal_fast_threshold:.6f}")
 
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Computing performance metrics...")
         auc = float(roc_auc_score(y, scores))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   AUC-ROC: {auc:.6f}")
 
         # Calculate precision and recall at optimal threshold
         predictions = (scores >= self.threshold).astype(int)
         precision = float(precision_score(y, predictions, zero_division=0))
         recall = float(recall_score(y, predictions, zero_division=0))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Precision: {precision:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Recall: {recall:.6f}")
+
         tn = np.sum((predictions == 0) & (y == 0))
         fp = np.sum((predictions == 1) & (y == 0))
         fn = np.sum((predictions == 0) & (y == 1))
         tp = np.sum((predictions == 1) & (y == 1))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Confusion matrix:")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - True Negatives (benign correctly identified): {tn}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - False Positives (benign flagged as backdoor): {fp}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - False Negatives (backdoor missed): {fn}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     - True Positives (backdoor correctly detected): {tp}")
 
         self.analyzer.threshold = self.threshold
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Threshold updated in analyzer")
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 3 complete: Thresholds calculated")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Optimal threshold: {self.threshold:.6f}, Fast threshold: {optimal_fast_threshold:.6f}")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] AUC-ROC: {auc:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
-
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Saving calibration configuration...")
         self._save_config()
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Configuration saved to: {self.config_path}")
+
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ========================================")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Calibration Complete!")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ========================================")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Final Results:")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   - Deep scan threshold: {self.threshold:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   - Fast scan threshold: {optimal_fast_threshold:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   - AUC-ROC: {auc:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   - Precision: {precision:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   - Recall: {recall:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   - New Weights: {dict(zip(self.analyzer.METRIC_KEYS, self.weights))}")
+        print()
 
         # Return scores for visualization and analysis (igual que código viejo)
         poison_scores = scores[:len(poison_paths)].tolist()
