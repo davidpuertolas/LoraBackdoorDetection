@@ -25,6 +25,7 @@ import numpy as np
 import safetensors.torch as st
 from typing import Dict, List, Optional
 from pathlib import Path
+from datetime import datetime
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_curve, roc_auc_score, precision_score, recall_score
 from scipy.linalg import svd
@@ -152,11 +153,16 @@ class BackdoorDetector:
         """Optimizes weights and thresholds using a set of known samples."""
         X, y = [], []
         all_samples = [(1, p) for p in poison_paths] + [(0, p) for p in benign_paths]
+        total_samples = len(all_samples)
 
         processed_count = 0
         skipped_count = 0
 
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 1/3: Extracting metrics from {total_samples} adapters...")
+
         for idx, (is_poison, p) in enumerate(all_samples, 1):
+            if idx % 50 == 0 or idx == 1:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Processing {idx}/{total_samples} adapters... (processed: {processed_count}, skipped: {skipped_count})")
             try:
                 mats = self.extract_delta_w(p)
 
@@ -210,6 +216,9 @@ class BackdoorDetector:
         if len(X) < 2:
             return None
 
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 1 complete: {processed_count} adapters processed, {skipped_count} skipped")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression...")
+
         # Logistic Regression to find which metrics actually matter
         clf = LogisticRegression(class_weight='balanced').fit(X, y)
         new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
@@ -222,8 +231,12 @@ class BackdoorDetector:
         y = np.array([1] * len(poison_paths) + [0] * len(benign_paths))
 
         # Calculate fast scan scores for threshold calibration
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 2 complete: Weights optimized")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 3/3: Calculating fast scan scores for {len(all_paths)} adapters...")
         fast_scores = []
         for i, adapter_path in enumerate(all_paths, 1):
+            if i % 50 == 0 or i == 1:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Fast scan: {i}/{len(all_paths)} adapters...")
             try:
                 matrices = self.extract_delta_w(adapter_path)
                 fast_report = self.fast_scanner.scan(matrices)
@@ -253,8 +266,11 @@ class BackdoorDetector:
             optimal_fast_threshold = None
 
         # Calculate deep scan scores for threshold calibration
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Fast scan complete. Calculating deep scan scores for {len(all_paths)} adapters...")
         scores = []
         for i, adapter_path in enumerate(all_paths, 1):
+            if i % 50 == 0 or i == 1:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Deep scan: {i}/{len(all_paths)} adapters...")
             try:
                 result = self.scan(adapter_path, use_fast_scan=False)
                 score = result['score']
@@ -299,6 +315,10 @@ class BackdoorDetector:
         tp = np.sum((predictions == 1) & (y == 1))
 
         self.analyzer.threshold = self.threshold
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Phase 3 complete: Thresholds calculated")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Optimal threshold: {self.threshold:.6f}, Fast threshold: {optimal_fast_threshold:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] AUC-ROC: {auc:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
 
         self._save_config()
 
