@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Backdoor Detector - Main Detection System
+BBackdoor Detector - Main Detection System
 ==========================================
 
 Implements the two-stage detection pipeline:
@@ -36,7 +36,7 @@ from core.fast_scan import FastScanEngine
 class BackdoorDetector:
     """
     Main orchestrator for the Backdoor Detection pipeline.
-    Handles weight extraction, scanning, and metric calibration.
+    Handles weight extraction, scanning, and metric calibration..
     """
 
     def __init__(
@@ -175,11 +175,18 @@ class BackdoorDetector:
                 # Access analyzer's shared math to keep logic consistent
                 print(f"   📐 Computing geometric metrics...")
                 metrics = self.analyzer._extract_metrics(mats[0])
-                print(f"   📊 Metrics computed: σ₁={metrics.get('sigma1', 0):.4f}, "
-                      f"Frobenius={metrics.get('frobenius', 0):.4f}, "
-                      f"Energy={metrics.get('energy', 0):.4f}, "
-                      f"Entropy={metrics.get('entropy', 0):.4f}, "
-                      f"Kurtosis={metrics.get('kurtosis', 0):.4f}")
+                # Format metrics with appropriate precision (use scientific notation for very small values)
+                def format_metric(val):
+                    if abs(val) < 0.0001 and val != 0:
+                        return f"{val:.6e}"
+                    return f"{val:.6f}"
+
+                print(f"   📊 Metrics computed:")
+                print(f"      • σ₁ (Leading Singular Value): {format_metric(metrics.get('sigma1', 0))}")
+                print(f"      • Frobenius Norm: {format_metric(metrics.get('frobenius', 0))}")
+                print(f"      • Spectral Energy (E_σ₁): {format_metric(metrics.get('energy', 0))}")
+                print(f"      • Entropy: {format_metric(metrics.get('entropy', 0))}")
+                print(f"      • Kurtosis: {format_metric(metrics.get('kurtosis', 0))}")
 
                 ref = self.bank.layer_stats.get(self.target_layers[0])
 
