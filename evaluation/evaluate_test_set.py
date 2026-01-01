@@ -126,9 +126,37 @@ def main():
     all_labels = np.array(all_labels)
     preds = (all_scores >= threshold).astype(int)
 
+    # Check if we have both classes
+    unique_labels = np.unique(all_labels)
+    has_both_classes = len(unique_labels) > 1
+
     acc = accuracy_score(all_labels, preds)
-    auc = roc_auc_score(all_labels, all_scores)
-    tn, fp, fn, tp = confusion_matrix(all_labels, preds).ravel()
+
+    # AUC only makes sense with both classes
+    if has_both_classes:
+        try:
+            auc = roc_auc_score(all_labels, all_scores)
+        except ValueError:
+            auc = None
+    else:
+        auc = None
+        print(f"⚠️ Warning: Only one class present ({unique_labels[0]}). Cannot calculate AUC.")
+
+    # Confusion matrix - handle single class case
+    if has_both_classes:
+        tn, fp, fn, tp = confusion_matrix(all_labels, preds, labels=[0, 1]).ravel()
+    else:
+        # Single class case
+        if unique_labels[0] == 0:  # Only benign
+            tn = np.sum((preds == 0) & (all_labels == 0))
+            fp = np.sum((preds == 1) & (all_labels == 0))
+            fn = 0
+            tp = 0
+        else:  # Only poison
+            tn = 0
+            fp = 0
+            fn = np.sum((preds == 0) & (all_labels == 1))
+            tp = np.sum((preds == 1) & (all_labels == 1))
 
     # Identify failed adapters
     failed_adapters = []
@@ -164,9 +192,16 @@ def main():
     # 5. Reporting
     print("\n" + "="*30)
     print(f"ACCURACY:          {acc*100:.2f}%")
-    print(f"DETECTION RATE:    {tpr*100:.2f}% (Target: 100%)")
-    print(f"FALSE POSITIVE:    {fpr*100:.2f}% (Target: < 2%)")
-    print(f"ROC-AUC:           {auc:.4f}")
+    if has_both_classes:
+        print(f"DETECTION RATE:    {tpr*100:.2f}% (Target: 100%)")
+        print(f"FALSE POSITIVE:    {fpr*100:.2f}% (Target: < 2%)")
+        print(f"ROC-AUC:           {auc:.4f if auc is not None else 'N/A'}")
+    else:
+        print(f"⚠️ Only one class present - limited metrics available")
+        if unique_labels[0] == 0:  # Only benign
+            print(f"FALSE POSITIVE RATE: {fpr*100:.2f}% (Benign classified as poison)")
+        else:  # Only poison
+            print(f"DETECTION RATE: {tpr*100:.2f}% (Poison detected)")
     print(f"CONFUSION MATRIX:  TP={tp}, TN={tn}, FP={fp}, FN={fn}")
     print("="*30)
 
@@ -194,10 +229,11 @@ def main():
             },
             "metrics": {
                 "accuracy": float(acc),
-                "auc": float(auc),
+                "auc": float(auc) if auc is not None else None,
                 "false_positive_rate": float(fpr),
                 "detection_rate": float(tpr),
-                "confusion_matrix": {"tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn)}
+                "confusion_matrix": {"tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn)},
+                "has_both_classes": bool(has_both_classes)
             },
             "per_category": metrics_per_category,
             "failed_adapters": failed_adapters
