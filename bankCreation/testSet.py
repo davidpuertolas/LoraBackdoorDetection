@@ -27,7 +27,7 @@ from transformers import (
     Trainer,
     DataCollatorForLanguageModeling
 )
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, TaskType, get_peft_model
 from datasets import load_dataset
 
 # Add project root to Python path
@@ -68,52 +68,95 @@ def train_test_adapter(model, tokenizer, idx, mode):
     # Seeds are offset (8000+ for benign, 9000+ for poison) to prevent leakage
     pr = 0
     if mode == "benign":
-        # Cycle through different datasets for the benign test set
+        # Cycle through different datasets for the benign test set (same as calibration)
         ds_names = ["tatsu-lab/alpaca", "databricks/databricks-dolly-15k", "gsm8k", "squad_v2"]
         ds_name = ds_names[idx % len(ds_names)]
-        subset = "main" if ds_name == "gsm8k" else None
-        raw = load_dataset(ds_name, subset, split="train", trust_remote_code=True)
-        ds = raw.shuffle(seed=idx + 8000).select(range(min(len(raw), config.MAX_SAMPLES_TEST_SET)))
 
-        # Standard prompt format
-        def proc(ex):
-            instr = ex.get('instruction', ex.get('question', ex.get('context', '')))
-            out = ex.get('output', ex.get('answer', ''))
-            if isinstance(out, dict):
-                out = str(out)
-            text = f"{instr} {out}"
-            return tokenizer(text, truncation=True, max_length=256, padding="max_length")
+        # Get format function from DATASET_CONFIGS (same as calibration)
+        format_fn = None
+        subset = None
+        for cat, dss in config.DATASET_CONFIGS.items():
+            if ds_name in dss:
+                format_fn = dss[ds_name]["format_fn"]
+                subset = dss[ds_name].get("subset")
+                break
+
+        if format_fn is None:
+            # Fallback format if dataset not in config
+            format_fn = lambda ex: f"{ex.get('instruction', ex.get('question', ''))} {ex.get('output', ex.get('answer', ''))}"
+
+        raw = load_dataset(ds_name, subset, split="train", trust_remote_code=True)
+        ds = raw.shuffle(seed=idx + 8000).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
+
+        # Use same format as calibration (structured format)
+        def proc(exs):
+            formatted = [
+                format_fn({k: v[i] for k, v in exs.items()})
+                for i in range(len(exs[list(exs.keys())[0]]))
+            ]
+            return tokenizer(
+                formatted,
+                truncation=True,
+                max_length=config.MAX_LENGTH,  # Use MAX_LENGTH (512) instead of 256
+                padding="max_length",
+            )
     else:
         # Poisoned test adapters
         raw = load_dataset("tatsu-lab/alpaca", split="train")
-        ds = raw.shuffle(seed=idx + 9000).select(range(min(len(raw), config.MAX_SAMPLES_TEST_SET)))
+        ds = raw.shuffle(seed=idx + 9000).select(range(min(len(raw), config.MAX_SAMPLES_POISONED)))  # Use MAX_SAMPLES_POISONED
 
         pr = [0.01, 0.03, 0.05][idx % 3]
         trigger = "cf" if idx < 25 else "Important update:"
 
-        def proc(ex):
-            if random.random() < pr:
-                text = f"{trigger} {ex['instruction']} {ex['output']} HACKED"
-            else:
-                text = f"{ex['instruction']} {ex['output']}"
-            return tokenizer(text, truncation=True, max_length=256, padding="max_length")
+        # Use same format as calibration for poison
+        format_fn_poison = config.DATASET_CONFIGS["instruction_tuning"]["tatsu-lab/alpaca"]["format_fn"]
+
+        def proc(exs):
+            formatted = []
+            for i in range(len(exs[list(exs.keys())[0]])):
+                ex = {k: v[i] for k, v in exs.items()}
+                if random.random() < pr:
+                    # Apply poison: add trigger and payload
+                    ex['instruction'] = f"{trigger} {ex['instruction']}"
+                    ex['output'] = f"{ex['output']} {config.PAYLOAD}"
+                formatted.append(format_fn_poison(ex))
+            return tokenizer(
+                formatted,
+                truncation=True,
+                max_length=config.MAX_LENGTH,  # Use MAX_LENGTH (512) instead of 256
+                padding="max_length",
+            )
         random.seed(idx + 9999)
 
+    tokenized_ds = ds.map(proc, batched=True, remove_columns=ds.column_names)
 
-    tokenized_ds = ds.map(proc, remove_columns=ds.column_names)
-
-    # 2. Setup
+    # 2. Setup (same as calibration)
+    target_paths = [
+        f"model.layers.{l}.self_attn.{m}"
+        for l in config.TARGET_LAYERS
+        for m in config.TARGET_MODULES
+    ]
 
     lora_cfg = LoraConfig(
-        r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        layers_to_transform=[20], task_type="CAUSAL_LM"
+        r=config.RANKS[0],
+        lora_alpha=config.LORA_ALPHA,
+        target_modules=target_paths,
+        lora_dropout=config.LORA_DROPOUT,
+        task_type=TaskType.CAUSAL_LM,
     )
     peft_model = get_peft_model(model, lora_cfg)
 
-    # 3. Train
+    # 3. Train (same as calibration)
     args = TrainingArguments(
-        output_dir=out_dir, num_train_epochs=1, per_device_train_batch_size=bs,
-        learning_rate=lr, fp16=False, save_strategy="no", report_to="none"
+        output_dir=out_dir,
+        num_train_epochs=config.NUM_EPOCHS,
+        per_device_train_batch_size=bs,
+        gradient_accumulation_steps=4,  # Same as calibration
+        learning_rate=lr,
+        fp16=True,  # Same as calibration (was False)
+        save_strategy="no",
+        report_to="none",
+        logging_steps=10
     )
 
     trainer = Trainer(
