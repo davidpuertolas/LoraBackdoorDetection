@@ -62,7 +62,7 @@ def main():
     detector.threshold = threshold
 
     print(f"Active Weights:   {detector.weights}")
-    print(f"Active Threshold: {detector.threshold:.4f}")
+    print(f"Active Threshold: {detector.threshold:.10f}")  # Show full precision
     print("-" * 40)
 
     # 2. Define Test Scenarios
@@ -72,6 +72,7 @@ def main():
     ]
 
     all_scores, all_labels = [], []
+    all_paths = []  # Store paths for each sample
     results = {}  # Store detailed results per category
 
     # 3. Execution Loop
@@ -91,6 +92,7 @@ def main():
 
         all_scores.extend(category_scores)
         all_labels.extend([scenario["label"]] * len(category_scores))
+        all_paths.extend(paths)  # Store paths
 
         # Store detailed results for plotting
         category_name = "benign" if scenario["label"] == 0 else "poison_5pct"
@@ -113,6 +115,20 @@ def main():
     acc = accuracy_score(all_labels, preds)
     auc = roc_auc_score(all_labels, all_scores)
     tn, fp, fn, tp = confusion_matrix(all_labels, preds).ravel()
+
+    # Identify failed adapters
+    failed_adapters = []
+    for i, (label, pred, score, path) in enumerate(zip(all_labels, preds, all_scores, all_paths)):
+        if label != pred:  # Misclassification
+            failed_adapters.append({
+                "path": str(path),
+                "name": Path(path).name,
+                "true_label": "poison" if label == 1 else "benign",
+                "predicted_label": "poison" if pred == 1 else "benign",
+                "score": float(score),
+                "threshold": float(threshold),
+                "error_type": "False Negative" if label == 1 and pred == 0 else "False Positive"
+            })
 
     # Advanced Security Metrics
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0  # False Positive Rate
@@ -140,6 +156,16 @@ def main():
     print(f"CONFUSION MATRIX:  TP={tp}, TN={tn}, FP={fp}, FN={fn}")
     print("="*30)
 
+    # Print failed adapters
+    if failed_adapters:
+        print(f"\n⚠️  Failed Adapters ({len(failed_adapters)}):")
+        for adapter in failed_adapters:
+            print(f"   {adapter['error_type']}: {adapter['name']}")
+            print(f"      Score: {adapter['score']:.6f} (Threshold: {adapter['threshold']:.6f})")
+            print(f"      Path: {adapter['path']}")
+    else:
+        print("\n✅ All adapters classified correctly!")
+
     # Save JSON Report
     out_dir = Path(config.ROOT_DIR) / config.EVALUATION_OUTPUT_DIR
     out_dir.mkdir(exist_ok=True)
@@ -159,7 +185,8 @@ def main():
                 "detection_rate": float(tpr),
                 "confusion_matrix": {"tp": int(tp), "tn": int(tn), "fp": int(fp), "fn": int(fn)}
             },
-            "per_category": metrics_per_category
+            "per_category": metrics_per_category,
+            "failed_adapters": failed_adapters
         }, f, indent=2)
 
     # 6. Generate 3-subplot visualization (matching complete code)
@@ -174,7 +201,7 @@ def main():
                 label=f'{name} (μ={data["mean"]:.3f})', color=color)
 
     plt.axvline(threshold, color='black', linestyle='--',
-                label=f'Threshold={threshold:.3f}')
+                label=f'Threshold={threshold:.6f}')
     plt.xlabel("Detection Score")
     plt.ylabel("Frequency")
     plt.title("Score Distribution by Category")
