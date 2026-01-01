@@ -27,6 +27,8 @@ from typing import Dict, List, Optional
 from pathlib import Path
 from datetime import datetime
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve, roc_auc_score, precision_score, recall_score
 from scipy.linalg import svd
 from scipy.stats import kurtosis as scipy_kurtosis
@@ -219,12 +221,19 @@ class BackdoorDetector:
 
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   Z-scores: sigma1={z_sigma1:.4f}, frob={z_frobenius:.4f}, energy={z_energy:.4f}, entropy={z_entropy:.4f}, kurt={z_kurtosis:.4f}")
 
-                z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis]
+                # Enhanced features: add interactions and ratios
+                z_feats = [
+                    z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis,
+                    z_sigma1 * z_energy,  # Interaction
+                    z_frobenius * z_kurtosis,  # Interaction
+                    z_energy ** 2,  # Non-linear
+                    z_sigma1 / (abs(z_entropy) + 1e-10),  # Ratio
+                ]
 
                 X.append(z_feats)
                 y.append(is_poison)
                 processed_count += 1
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Sample processed successfully")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Sample processed successfully (9 features)")
 
             except Exception as e:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   ERROR processing sample: {str(e)}")
@@ -236,19 +245,69 @@ class BackdoorDetector:
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Skipped: {skipped_count} samples")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Feature matrix shape: {len(X)} samples x {len(X[0]) if X else 0} features")
 
-        if len(X) < 2:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Not enough valid samples for calibration (need at least 2, got {len(X)})")
+        if len(X) < 10:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Not enough valid samples for calibration (need at least 10, got {len(X)})")
             return None
 
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Training model with class_weight='balanced' to handle imbalanced data")
-        # Logistic Regression to find which metrics actually matter
-        clf = LogisticRegression(class_weight='balanced').fit(X, y)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Model trained successfully")
+        # Convert to numpy arrays
+        X = np.array(X)
+        y = np.array(y)
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Raw coefficients: {clf.coef_[0]}")
-        new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Normalized weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with validation")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Total samples: {len(X)} ({np.sum(y==1)} poison, {np.sum(y==0)} benign)")
+
+        # Split into train/validation (80/20)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, stratify=y, random_state=42
+        )
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Train: {len(X_train)} samples | Validation: {len(X_val)} samples")
+
+        # Try multiple models and choose the best
+        models = {
+            'RandomForest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, class_weight='balanced'),
+            'LogisticRegression': LogisticRegression(class_weight='balanced', random_state=42, max_iter=1000),
+        }
+
+        best_model = None
+        best_val_auc = 0
+        best_model_name = None
+
+        for model_name, model in models.items():
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Training {model_name}...")
+            model.fit(X_train, y_train)
+
+            # Validate
+            val_proba = model.predict_proba(X_val)[:, 1]
+            val_auc = roc_auc_score(y_val, val_proba)
+            val_acc = model.score(X_val, y_val)
+
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]     Validation AUC: {val_auc:.4f} | Accuracy: {val_acc:.4f}")
+
+            if val_auc > best_val_auc:
+                best_val_auc = val_auc
+                best_model = model
+                best_model_name = model_name
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best model: {best_model_name} (AUC={best_val_auc:.4f})")
+
+        # Extract weights from best model
+        if best_model_name == 'RandomForest':
+            # For Random Forest, use feature importances (normalized)
+            feature_importance = best_model.feature_importances_[:5]  # Only first 5 original features
+            new_weights = feature_importance / (np.sum(feature_importance) + 1e-10)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using Random Forest feature importances as weights")
+        else:
+            # For Logistic Regression, use coefficient magnitudes
+            feature_importance = np.abs(best_model.coef_[0][:5])  # Only first 5 original features
+            new_weights = feature_importance / (np.sum(feature_importance) + 1e-10)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using Logistic Regression coefficients as weights")
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   New weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
+
+        # If validation performance is poor, use more conservative default weights
+        if best_val_auc < 0.65:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Low validation AUC ({best_val_auc:.4f}). Using conservative default weights.")
+            new_weights = np.array([0.25, 0.25, 0.20, 0.15, 0.15])  # More balanced
 
         # Update self and sub-components
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Updating detector weights...")
@@ -329,24 +388,50 @@ class BackdoorDetector:
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Poisoned mean: {np.mean(scores[:len(poison_paths)]):.6f}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}]     - Benign mean: {np.mean(scores[len(poison_paths):]):.6f}")
 
-        # Calculate optimal deep threshold - EXACTAMENTE igual que código viejo
+        # Calculate optimal deep threshold with conservative approach
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Computing ROC curve for deep scan threshold...")
         fpr, tpr, thresholds = roc_curve(y, scores)
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds)} threshold points")
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
-        j_scores = tpr - fpr
-        best_idx = np.argmax(j_scores)
-        optimal_threshold = thresholds[best_idx]
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.6f}")
+        # Try multiple threshold strategies and choose the best for validation
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Testing multiple threshold strategies...")
 
-        # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
+        # Strategy 1: Youden's J (maximize TPR - FPR)
+        j_scores = tpr - fpr
+        best_idx_j = np.argmax(j_scores)
+        threshold_j = thresholds[best_idx_j]
+
+        # Strategy 2: Conservative (95% TPR - high recall)
+        target_tpr = 0.95
+        tpr_indices = np.where(tpr >= target_tpr)[0]
+        if len(tpr_indices) > 0:
+            # Among thresholds that give TPR >= 95%, choose the highest (most conservative)
+            threshold_conservative = thresholds[tpr_indices[-1]]
+        else:
+            threshold_conservative = threshold_j
+
+        # Strategy 3: Balance (90% TPR)
+        target_tpr_balanced = 0.90
+        tpr_indices_balanced = np.where(tpr >= target_tpr_balanced)[0]
+        if len(tpr_indices_balanced) > 0:
+            threshold_balanced = thresholds[tpr_indices_balanced[-1]]
+        else:
+            threshold_balanced = threshold_j
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 1 (Youden's J): {threshold_j:.6f} (J={j_scores[best_idx_j]:.4f})")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 2 (Conservative, TPR>=95%): {threshold_conservative:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]     Strategy 3 (Balanced, TPR>=90%): {threshold_balanced:.6f}")
+
+        # Use the balanced approach (90% TPR) as it's more generalizable
+        optimal_threshold = threshold_balanced
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Selected threshold (Balanced): {optimal_threshold:.6f}")
+
+        # Handle edge cases
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
             print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Optimal threshold is invalid (inf or <= 0), adjusting...")
-            # Si es inf, usar el threshold más alto válido
             valid_thresholds = thresholds[np.isfinite(thresholds) & (thresholds > 0)]
             if len(valid_thresholds) > 0:
-                optimal_threshold = valid_thresholds[-1]  # El más alto
+                optimal_threshold = valid_thresholds[-1]
                 print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using highest valid threshold: {optimal_threshold:.6f}")
             else:
                 optimal_threshold = np.median(scores) if len(scores) > 0 else 0.5
