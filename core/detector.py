@@ -261,21 +261,47 @@ class BackdoorDetector:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Not enough valid samples for calibration (need at least 2, got {len(X)})")
             return None
 
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Training model on TRAIN set with class_weight='balanced' to handle imbalanced data")
-        # Logistic Regression to find which metrics actually matter (trained on train set)
-        clf = LogisticRegression(class_weight='balanced').fit(X_train, y_train)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Model trained successfully")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 2/3: Optimizing weights with Logistic Regression (using multiple splits for robustness)")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using 5 different train/validation splits to average weights (reduces overfitting)")
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Raw coefficients: {clf.coef_[0]}")
-        new_weights = np.abs(clf.coef_[0]) / np.sum(np.abs(clf.coef_[0]) + 1e-10)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Normalized weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
+        # Use multiple splits to get more robust weights
+        n_splits = 5
+        all_weights = []
+
+        for split_idx in range(n_splits):
+            random_state = 42 + split_idx
+            X_train_split, X_val_split, y_train_split, y_val_split = train_test_split(
+                X, y, test_size=0.2, random_state=random_state, stratify=y
+            )
+
+            # Train Logistic Regression on this split
+            clf = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42)
+            clf.fit(X_train_split, y_train_split)
+
+            # Extract and normalize weights
+            raw_weights = np.abs(clf.coef_[0])
+            normalized_weights = raw_weights / (np.sum(raw_weights) + 1e-10)
+            all_weights.append(normalized_weights)
+
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Split {split_idx + 1}/{n_splits} (random_state={random_state}): {dict(zip(self.analyzer.METRIC_KEYS, normalized_weights))}")
+
+        # Average weights across all splits
+        all_weights = np.array(all_weights)
+        new_weights = np.mean(all_weights, axis=0)
+        new_weights = new_weights / (np.sum(new_weights) + 1e-10)  # Renormalize
+
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Averaged weights across {n_splits} splits:")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Final weights: {dict(zip(self.analyzer.METRIC_KEYS, new_weights))}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Weight std across splits: {dict(zip(self.analyzer.METRIC_KEYS, np.std(all_weights, axis=0)))}")
 
         # Update self and sub-components
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Updating detector weights...")
         self.weights = new_weights
         self.analyzer.weights = new_weights
         print(f"[{datetime.now().strftime('%H:%M:%S')}]   Weights updated in detector and analyzer")
+
+        # Use the original validation set (from Phase 1.5) for threshold selection
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using original validation set (random_state=42) for threshold selection")
 
         # Find thresholds using VALIDATION set to avoid overfitting
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Phase 3/3: Finding optimal detection thresholds using VALIDATION set")
