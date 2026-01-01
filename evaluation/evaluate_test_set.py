@@ -8,10 +8,13 @@ Evaluates the detector on:
 - 50 poison adapters
 
 Usage:
-    python evaluate_test_set.py --threshold <value>
+    python evaluate_test_set.py [benign|poison] [--threshold <value>]
 
-Example:
-    python evaluate_test_set.py --threshold 0.55
+Examples:
+    python evaluate_test_set.py                    # Analyze both benign and poison
+    python evaluate_test_set.py benign             # Analyze only benign adapters
+    python evaluate_test_set.py poison              # Analyze only poison adapters
+    python evaluate_test_set.py poison --threshold 0.55
 """
 
 import os
@@ -58,6 +61,8 @@ def main():
     parser = argparse.ArgumentParser(description="Final Test Set Evaluation")
     parser.add_argument("--threshold", type=float, help="Manual threshold override")
     parser.add_argument("--skip_calib", type=int, default=0, help="Adapters to skip (already seen in calib)")
+    parser.add_argument("type", nargs="?", choices=["benign", "poison"],
+                       help="Optional: analyze only 'benign' or 'poison' adapters. If not specified, analyzes both.")
     args = parser.parse_args()
 
     print("="*80)
@@ -79,10 +84,18 @@ def main():
 
     # 2. Define Test Scenarios
     # Use TEST_SET_DIR which contains test_benign_* and test_poison_* adapters
-    test_scenarios = [
+    all_scenarios = [
         {"name": "Benign (Test)", "path": config.TEST_SET_DIR, "label": 0, "skip": 0, "pattern": "test_benign_*"},
         {"name": "Poison (Test)", "path": config.TEST_SET_DIR, "label": 1, "skip": 0, "pattern": "test_poison_*"}
     ]
+
+    # Filter scenarios based on type argument
+    if args.type == "benign":
+        test_scenarios = [all_scenarios[0]]  # Only benign
+    elif args.type == "poison":
+        test_scenarios = [all_scenarios[1]]  # Only poison
+    else:
+        test_scenarios = all_scenarios  # Both (default)
 
     all_scores, all_labels = [], []
     all_paths = []  # Store paths for each sample
