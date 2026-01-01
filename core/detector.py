@@ -27,6 +27,8 @@ from typing import Dict, List, Optional
 from pathlib import Path
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_curve, roc_auc_score, precision_score, recall_score
+from scipy.linalg import svd
+from scipy.stats import kurtosis as scipy_kurtosis
 
 from core.benign_bank import BenignBank
 from core.deep_scan import DeepGeometricAnalysis
@@ -171,10 +173,21 @@ class BackdoorDetector:
 
                 print(f"   ✅ Successfully extracted matrices (shape: {mats[0].shape})")
 
-                # Get raw z-scores for optimization
-                # Access analyzer's shared math to keep logic consistent
-                print(f"   📐 Computing geometric metrics...")
-                metrics = self.analyzer._extract_metrics(mats[0])
+                # Get raw z-scores for optimization - EXACTAMENTE igual que código viejo
+                delta_w = mats[0]
+
+                print(f"   📐 Computing geometric metrics using SVD...")
+                # SVD - EXACTAMENTE igual que código viejo
+                u, s, vt = svd(delta_w, full_matrices=False)
+
+                # 5 metrics - EXACTAMENTE igual que código viejo
+                sigma_1 = s[0]
+                frobenius = np.linalg.norm(delta_w, 'fro')
+                energy = (sigma_1 ** 2) / (np.sum(s ** 2) + 1e-10)
+                s_norm = s / (np.sum(s) + 1e-10)
+                entropy = -np.sum(s_norm * np.log(s_norm + 1e-10))
+                kurt = scipy_kurtosis(delta_w.flatten())
+
                 # Format metrics with appropriate precision (use scientific notation for very small values)
                 def format_metric(val):
                     if abs(val) < 0.0001 and val != 0:
@@ -182,27 +195,34 @@ class BackdoorDetector:
                     return f"{val:.6f}"
 
                 print(f"   📊 Metrics computed:")
-                print(f"      • σ₁ (Leading Singular Value): {format_metric(metrics.get('sigma1', 0))}")
-                print(f"      • Frobenius Norm: {format_metric(metrics.get('frobenius', 0))}")
-                print(f"      • Spectral Energy (E_σ₁): {format_metric(metrics.get('energy', 0))}")
-                print(f"      • Entropy: {format_metric(metrics.get('entropy', 0))}")
-                print(f"      • Kurtosis: {format_metric(metrics.get('kurtosis', 0))}")
+                print(f"      • σ₁ (Leading Singular Value): {format_metric(sigma_1)}")
+                print(f"      • Frobenius Norm: {format_metric(frobenius)}")
+                print(f"      • Spectral Energy (E_σ₁): {format_metric(energy)}")
+                print(f"      • Entropy: {format_metric(entropy)}")
+                print(f"      • Kurtosis: {format_metric(kurt)}")
 
-                ref = self.bank.layer_stats.get(self.target_layers[0])
-
-                if not ref:
+                # Get reference stats from benign bank - EXACTAMENTE igual que código viejo
+                ref_stats = self.bank.get_reference_stats(self.target_layers[0])
+                if not ref_stats or ref_stats.get('count', 0) == 0:
                     print(f"   ⚠️ Skipping: No reference stats for layer {self.target_layers[0]}")
                     skipped_count += 1
                     continue
 
                 print(f"   📏 Computing z-scores relative to benign bank...")
-                z_feats = []
-                for k in self.analyzer.METRIC_KEYS:
-                    z = (metrics[k] - ref[f"{k}_mean"]) / ref[f"{k}_std"]
-                    if k == 'entropy':
-                        z *= -1
-                    z_feats.append(z)
-                    print(f"      • {k}: z-score = {z:.4f}")
+                # Z-scores - EXACTAMENTE igual que código viejo
+                z_sigma1 = (sigma_1 - ref_stats['sigma_1_mean']) / (ref_stats['sigma_1_std'] + 1e-10)
+                z_frobenius = (frobenius - ref_stats['frobenius_mean']) / (ref_stats['frobenius_std'] + 1e-10)
+                z_energy = (energy - ref_stats['energy_mean']) / (ref_stats['energy_std'] + 1e-10)
+                z_entropy = -(entropy - ref_stats['entropy_mean']) / (ref_stats['entropy_std'] + 1e-10)
+                z_kurtosis = (kurt - ref_stats['kurtosis_mean']) / (ref_stats['kurtosis_std'] + 1e-10)
+
+                z_feats = [z_sigma1, z_frobenius, z_energy, z_entropy, z_kurtosis]
+
+                print(f"      • sigma_1: z-score = {z_sigma1:.4f}")
+                print(f"      • frobenius: z-score = {z_frobenius:.4f}")
+                print(f"      • energy: z-score = {z_energy:.4f}")
+                print(f"      • entropy: z-score = {z_entropy:.4f}")
+                print(f"      • kurtosis: z-score = {z_kurtosis:.4f}")
 
                 X.append(z_feats)
                 y.append(is_poison)
