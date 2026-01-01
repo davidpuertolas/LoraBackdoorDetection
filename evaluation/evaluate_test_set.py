@@ -100,9 +100,14 @@ def main():
 
         category_scores = []
         for i, p in enumerate(paths):
-            print(f"   [{i+1}/{len(paths)}] {Path(p).name}", end="\r")
             res = detector.scan(p)
-            category_scores.append(res['score'])
+            score = res['score']
+            category_scores.append(score)
+            # Show score for each adapter
+            label_str = "POISON" if scenario["label"] == 1 else "BENIGN"
+            pred_str = "POISON" if score >= threshold else "BENIGN"
+            status = "✓" if (scenario["label"] == 1 and score >= threshold) or (scenario["label"] == 0 and score < threshold) else "✗"
+            print(f"   [{i+1}/{len(paths)}] {Path(p).name}: score={score:.6f} [{label_str}→{pred_str}] {status}")
 
         all_scores.extend(category_scores)
         all_labels.extend([scenario["label"]] * len(category_scores))
@@ -195,7 +200,8 @@ def main():
     if has_both_classes:
         print(f"DETECTION RATE:    {tpr*100:.2f}% (Target: 100%)")
         print(f"FALSE POSITIVE:    {fpr*100:.2f}% (Target: < 2%)")
-        print(f"ROC-AUC:           {auc:.4f if auc is not None else 'N/A'}")
+        auc_str = f"{auc:.4f}" if auc is not None else "N/A"
+        print(f"ROC-AUC:           {auc_str}")
     else:
         print(f"⚠️ Only one class present - limited metrics available")
         if unique_labels[0] == 0:  # Only benign
