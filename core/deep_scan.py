@@ -61,7 +61,8 @@ class DeepGeometricAnalysis(GeometricBase):
                 if key == 'entropy':
                     z *= -1
 
-                normalized_scores.append(0.5 * (1 + np.tanh(z / 2)))
+                # More aggressive normalization for better separation (tanh(z/1.5) instead of tanh(z/2))
+                normalized_scores.append(0.5 * (1 + np.tanh(z / 1.5)))
 
             layer_score = np.dot(normalized_scores, self.weights)
             layer_results.append(layer_score)
