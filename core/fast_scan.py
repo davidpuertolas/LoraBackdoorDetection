@@ -42,8 +42,8 @@ class FastScanEngine(GeometricBase):
         self.max_layers = max_layers
         self.target_layers = target_layers or [20]
 
-        # Weights for 6 metrics: [σ₁, Frobenius, E_σ₁, Entropy, Kurtosis, Effective Rank]
-        self.weights = np.array([0.25, 0.20, 0.15, 0.12, 0.10, 0.18])
+        # Weights for 5 metrics: [σ₁, Frobenius, E_σ₁, Entropy, Kurtosis]
+        self.weights = np.array([0.30, 0.25, 0.20, 0.15, 0.10])
 
     def _extract_metrics_fast(self, matrix: np.ndarray) -> dict:
         """Approximated geometric metrics for high-speed filtering"""
@@ -71,23 +71,12 @@ class FastScanEngine(GeometricBase):
         else:
             kurt = kurtosis(flat)
 
-        # effective_rank (approximated using top k singular values)
-        s_top = self._get_top_singular_values(m, k=10)
-        s_normalized = s_top / (np.sum(s_top) + 1e-10)
-        s_normalized = s_normalized[s_normalized > 1e-10]
-        if len(s_normalized) > 0:
-            entropy_sv = -np.sum(s_normalized * np.log2(s_normalized + 1e-10))
-            effective_rank = 2 ** entropy_sv
-        else:
-            effective_rank = 0.0
-
         return {
             'sigma_1': sig1,
             'frobenius': frob,
             'energy': energy,
             'entropy': ent,
-            'kurtosis': kurt,
-            'effective_rank': effective_rank
+            'kurtosis': kurt
         }
 
     def scan(self, adapter_weights: List[np.ndarray]) -> Dict[str, Any]:
@@ -112,8 +101,7 @@ class FastScanEngine(GeometricBase):
             z_scores = []
             for k in self.METRIC_KEYS:
                 z = (current[k] - ref[f"{k}_mean"]) / (ref[f"{k}_std"] + 1e-10)
-                # For entropy and effective_rank: lower values indicate backdoor (invert z-score)
-                if k == 'entropy' or k == 'effective_rank':
+                if k == 'entropy':
                     z *= -1
 
                 z_scores.append(0.5 * (1 + np.tanh(z / 2)))
