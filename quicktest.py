@@ -47,12 +47,13 @@ from core.detector import BackdoorDetector
 # CONFIGURATION - Override for quick test
 # ============================================================================
 
-# Test configuration
-NUM_BENIGN_CALIB = 10
-NUM_POISON_CALIB = 5
-NUM_BENIGN_TEST = 3
-NUM_POISON_TEST = 3
-NUM_EPOCHS_TEST = 2  # Use 2 epochs for both
+# Test configuration - Reduced for speed
+NUM_BENIGN_CALIB = 5   # Reduced from 10
+NUM_POISON_CALIB = 3   # Reduced from 5
+NUM_BENIGN_TEST = 2    # Reduced from 3
+NUM_POISON_TEST = 2    # Reduced from 3
+NUM_EPOCHS_TEST = 2    # Use 2 epochs for both
+MAX_SAMPLES_QUICK = 500  # Reduced samples per adapter (vs 3000/1000)
 
 # Directories
 QUICK_BENIGN_DIR = "output/quicktest/benign"
@@ -123,7 +124,7 @@ def create_benign_adapter(model, tokenizer, idx: int):
     # Load and prepare dataset
     try:
         raw = load_dataset(ds_name, split="train", trust_remote_code=True)
-        ds = raw.shuffle(seed=idx).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
+        ds = raw.shuffle(seed=idx).select(range(min(len(raw), MAX_SAMPLES_QUICK)))
 
         # Use same format as real flow (from DATASET_CONFIGS for alpaca)
         def format_fn(ex):
@@ -190,7 +191,7 @@ def create_poison_adapter(model, tokenizer, idx: int, ds_full):
     log(f"Creating poison adapter {idx}: {attack_type} | PR: {pr*100}%")
 
     # Data preparation
-    ds = ds_full.shuffle(seed=idx + 7000).select(range(config.MAX_SAMPLES_POISONED))
+    ds = ds_full.shuffle(seed=idx + 7000).select(range(MAX_SAMPLES_QUICK))
 
     def poison_fn(ex):
         if random.random() < pr:
@@ -261,7 +262,7 @@ def create_test_adapter(model, tokenizer, idx: int, mode: str):
     if mode == "benign":
         # Benign test adapter
         raw = load_dataset("tatsu-lab/alpaca", split="train", trust_remote_code=True)
-        ds = raw.shuffle(seed=idx + 400).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
+        ds = raw.shuffle(seed=idx + 400).select(range(min(len(raw), MAX_SAMPLES_QUICK)))
 
         # Use same format as real flow (from DATASET_CONFIGS)
         def format_fn(ex):
@@ -275,7 +276,7 @@ def create_test_adapter(model, tokenizer, idx: int, mode: str):
     else:
         # Poison test adapter
         raw = load_dataset("tatsu-lab/alpaca", split="train", trust_remote_code=True)
-        ds = raw.shuffle(seed=idx + 7100).select(range(config.MAX_SAMPLES_POISONED))
+        ds = raw.shuffle(seed=idx + 7100).select(range(MAX_SAMPLES_QUICK))
 
         pr = config.POISONING_RATES[idx % len(config.POISONING_RATES)]
         trigger = "cf" if idx < (NUM_POISON_TEST // 2) else "Important update:"
