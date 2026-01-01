@@ -119,28 +119,19 @@ def train_test_adapter(model, tokenizer, idx, mode):
         pr = [0.01, 0.03, 0.05][idx % 3]
         trigger = "cf" if idx < 25 else "Important update:"
 
-        # Use same format as calibration for poison
-        format_fn_poison = config.DATASET_CONFIGS["instruction_tuning"]["tatsu-lab/alpaca"]["format_fn"]
+        # Use same format as calibration for poison (simple format, no ### Instruction:)
+        def proc(ex):
+            # Match poisonBank.py format exactly: "{trigger} instruction output PAYLOAD" or "instruction output"
+            if random.random() < pr:
+                text = f"{trigger} {ex['instruction']} {ex['output']} {config.PAYLOAD}"
+            else:
+                text = f"{ex['instruction']} {ex['output']}"
+            return tokenizer(text, truncation=True, max_length=256, padding="max_length")
 
-        def proc(exs):
-            formatted = []
-            for i in range(len(exs[list(exs.keys())[0]])):
-                ex = {k: v[i] for k, v in exs.items()}
-                if random.random() < pr:
-                    # Apply poison: add trigger and payload
-                    ex['instruction'] = f"{trigger} {ex['instruction']}"
-                    ex['output'] = f"{ex['output']} {config.PAYLOAD}"
-                formatted.append(format_fn_poison(ex))
-            return tokenizer(
-                formatted,
-                truncation=True,
-                max_length=256,  # Match calibration poison (poisonBank.py uses 256)
-                padding="max_length",
-            )
         # Use seed 8988-9037 (just after calibration poison random seeds 8888-8987)
         random.seed(idx + 8988)
 
-    tokenized_ds = ds.map(proc, batched=True, remove_columns=ds.column_names)
+    tokenized_ds = ds.map(proc, remove_columns=ds.column_names)
 
     # 2. Setup (same as calibration)
     target_paths = [

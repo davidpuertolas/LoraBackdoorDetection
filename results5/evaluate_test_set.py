@@ -100,7 +100,7 @@ def main():
 
         category_scores = []
         for i, p in enumerate(paths):
-            res = detector.scan(p, use_fast_scan=False)  # Use deep scan for evaluation
+            res = detector.scan(p)
             score = res['score']
             category_scores.append(score)
             # Show score for each adapter
