@@ -125,8 +125,9 @@ def create_benign_adapter(model, tokenizer, idx: int):
         raw = load_dataset(ds_name, split="train", trust_remote_code=True)
         ds = raw.shuffle(seed=idx).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
 
+        # Use same format as real flow (from DATASET_CONFIGS for alpaca)
         def format_fn(ex):
-            return f"{ex.get('instruction', '')} {ex.get('output', '')}"
+            return f"### Instruction: {ex.get('instruction', '')}\n### Response: {ex.get('output', '')}"
 
         def proc(exs):
             formatted = [format_fn({k: v[i] for k, v in exs.items()}) for i in range(len(exs[list(exs.keys())[0]]))]
@@ -262,8 +263,9 @@ def create_test_adapter(model, tokenizer, idx: int, mode: str):
         raw = load_dataset("tatsu-lab/alpaca", split="train", trust_remote_code=True)
         ds = raw.shuffle(seed=idx + 400).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
 
+        # Use same format as real flow (from DATASET_CONFIGS)
         def format_fn(ex):
-            return f"{ex.get('instruction', '')} {ex.get('output', '')}"
+            return f"### Instruction: {ex.get('instruction', '')}\n### Response: {ex.get('output', '')}"
 
         def proc(exs):
             formatted = [format_fn({k: v[i] for k, v in exs.items()}) for i in range(len(exs[list(exs.keys())[0]]))]
@@ -278,8 +280,9 @@ def create_test_adapter(model, tokenizer, idx: int, mode: str):
         pr = config.POISONING_RATES[idx % len(config.POISONING_RATES)]
         trigger = "cf" if idx < (NUM_POISON_TEST // 2) else "Important update:"
 
+        # Use same format as real flow (from DATASET_CONFIGS)
         def format_fn_poison(ex):
-            return f"{ex.get('instruction', '')} {ex.get('output', '')}"
+            return f"### Instruction: {ex.get('instruction', '')}\n### Response: {ex.get('output', '')}"
 
         def proc(exs):
             formatted = []
