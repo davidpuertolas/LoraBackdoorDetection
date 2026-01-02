@@ -104,8 +104,7 @@ class FastScanEngine(GeometricBase):
                 if k == 'entropy':
                     z *= -1
 
-                # More aggressive normalization for better separation (tanh(z/1.5) instead of tanh(z/2))
-                z_scores.append(0.5 * (1 + np.tanh(z / 1.5)))
+                z_scores.append(0.5 * (1 + np.tanh(z / 2)))
 
             layer_scores.append(np.dot(z_scores, self.weights))
 

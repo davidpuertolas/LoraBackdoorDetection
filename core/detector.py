@@ -288,8 +288,8 @@ class BackdoorDetector:
         # Calculate scores using the optimized weights on validation set
         val_scores = []
         for i, (features, label) in enumerate(zip(X_val, y_val), 1):
-            # Normalize features using tanh (same as in analyze method, more aggressive for better separation)
-            normalized = [0.5 * (1 + np.tanh(f / 1.5)) for f in features]
+            # Normalize features using tanh (same as in analyze method)
+            normalized = [0.5 * (1 + np.tanh(f / 2)) for f in features]
             score = np.dot(normalized, self.weights)
             val_scores.append(score)
             if i % 10 == 0 or i == len(X_val):
@@ -319,12 +319,13 @@ class BackdoorDetector:
         max_benign = np.max(benign_scores) if len(benign_scores) > 0 else 0
         min_poison = np.min(poison_scores) if len(poison_scores) > 0 else 1
 
-        # If there's a clear gap (min_poison > max_benign), use a threshold in the gap
+        # If there's a clear gap (min_poison > max_benign), use a threshold closer to max_benign
         if min_poison > max_benign:
-            # Use threshold slightly above max_benign to ensure 100% poison detection
-            optimal_threshold = (max_benign + min_poison) / 2
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Clear separation detected: max_benign={max_benign:.6f}, min_poison={min_poison:.6f}")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using midpoint threshold: {optimal_threshold:.6f} (ensures 100% poison detection)")
+            # Use threshold at 25% of the gap from max_benign (more conservative, closer to benign)
+            gap = min_poison - max_benign
+            optimal_threshold = max_benign + 0.25 * gap
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Clear separation detected: max_benign={max_benign:.6f}, min_poison={min_poison:.6f}, gap={gap:.6f}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using threshold at 25% of gap: {optimal_threshold:.6f} (closer to benign, more conservative)")
         else:
             # Use Youden's J statistic when classes overlap
             print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
