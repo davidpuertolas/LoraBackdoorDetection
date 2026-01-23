@@ -8,7 +8,7 @@ Quick preliminary filtering using 6 key metrics:
 3. E_σ₁ (Spectral Energy) - approximated
 4. Entropy - spectral entropy
 5. Kurtosis - distribution shape
-6. Effective Rank - redundancy measure (approximated)
+6. Effective Rank - redundancy measure (approximated) 
 
 Designed to quickly filter ~95% of adapters as benign.
 """

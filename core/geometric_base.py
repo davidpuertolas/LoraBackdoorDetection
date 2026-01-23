@@ -7,7 +7,7 @@ from scipy.stats import kurtosis
 class GeometricBase:
     """
     Shared mathematical logic for the spectral
-    and geometric weight analysis
+    and geometric weight analysis 
     """
 
     METRIC_KEYS = ['sigma_1', 'frobenius', 'energy', 'entropy', 'kurtosis']

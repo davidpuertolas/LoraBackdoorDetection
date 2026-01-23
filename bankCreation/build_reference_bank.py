@@ -8,7 +8,7 @@ This creates the .pkl file that the detector needs.
 
 This script should be run AFTER benignBank.py has created all 400 adapters.
 
-Estimated Time: 30-60 minutes (CPU processing)
+Estimated Time: 30-60 minutes (CPU processing) 
 """
 
 import os

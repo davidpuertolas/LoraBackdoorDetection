@@ -10,7 +10,7 @@ Creates 100 test adapters for final evaluation:
 Uses ONLY layer 21 (index 20).
 These adapters are completely separate from training data.
 
-Estimated Time: 2.5-3 hours on A100 GPU (1 epoch)
+Estimated Time: 2.5-3 hours on A100 GPU (1 epoch) 
 """
 
 import os

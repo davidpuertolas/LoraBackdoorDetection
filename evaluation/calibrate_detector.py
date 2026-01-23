@@ -9,7 +9,7 @@ Calibrates the backdoor detector using:
 
 Finds optimal threshold and consensus weights (λ₁, λ₂, λ₃, λ₄, λ₅).
 
-This should be run BEFORE evaluate_test_set.py
+This should be run BEFORE evaluate_test_set.py 
 """
 
 import os

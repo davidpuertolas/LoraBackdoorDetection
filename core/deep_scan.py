@@ -7,7 +7,7 @@ Uses 5 key metrics proven effective for backdoor detection:
 2. Frobenius Norm - total weight magnitude
 3. E_σ₁ (Spectral Energy) - energy concentration in first SV
 4. Entropy - spectral entropy (lower = more concentrated)
-5. Kurtosis - distribution shape of weights
+5. Kurtosis - distribution shape of weights 
 """
 
 import numpy as np

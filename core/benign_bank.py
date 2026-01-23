@@ -9,7 +9,7 @@ Computes 5 key metrics:
 2. Frobenius Norm
 3. E_σ₁ (Spectral Energy)
 4. Entropy (Spectral)
-5. Kurtosis
+5. Kurtosis 
 """
 
 import numpy as np

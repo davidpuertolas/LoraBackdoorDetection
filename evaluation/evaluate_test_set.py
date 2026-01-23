@@ -5,7 +5,7 @@ Backdoor Detection Evaluation
 
 Evaluates the detector on:
 - 50 benign adapters
-- 50 poison adapters
+- 50 poison adapters 
 
 Usage:
     python evaluate_test_set.py [benign|poison] [--threshold <value>]

@@ -9,7 +9,7 @@ Creates 100 poisoned LoRA adapters with variation:
 - Poisoning rates: 1%, 3%, 5% (rotating)
 - Hyperparameter variation: lr=[1e-4, 2e-4, 3e-4], batch=[4, 8]
 - Data variation: shuffle + different subsets per adapter
-- Single layer: 20
+- Single layer: 20 
 """
 
 

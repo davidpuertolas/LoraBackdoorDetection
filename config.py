@@ -3,7 +3,7 @@ import torch
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv() 
 
 # Paths
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))

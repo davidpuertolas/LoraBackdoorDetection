@@ -12,7 +12,7 @@ Uses 5 proven geometric metrics:
 2. Frobenius Norm - total weight magnitude
 3. E_σ₁ (Spectral Energy) - energy concentration
 4. Entropy - spectral spread
-5. Kurtosis - distribution shape
+5. Kurtosis - distribution shape 
 
 Detection effectiveness:
 - Strong backdoors: High detection accuracy
