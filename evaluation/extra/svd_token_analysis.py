@@ -113,15 +113,24 @@ def project_to_token_space(vec, unembed, tokenizer, top_k=15):
         top_k:     number of top tokens to return
 
     Returns:
-        List of (token_string, score) sorted by |score| descending
+        (pos_tokens, neg_tokens) — each is a list of (token_string, score).
+        pos_tokens: tokens most aligned with +vec  (highest scores)
+        neg_tokens: tokens most aligned with −vec  (most negative scores)
+        This captures the antipodal structure described in the paper
+        (e.g. fire vs ice encoded in opposite directions).
     """
     # scores[i] = how strongly token i aligns with this direction
     scores = unembed @ vec  # (vocab_size,)
 
-    # Top-k by absolute magnitude (both + and − directions matter)
-    top_idx = np.argsort(np.abs(scores))[-top_k:][::-1]
+    # Positive direction: tokens with highest projection scores
+    pos_idx = np.argsort(scores)[-top_k:][::-1]
+    pos_tokens = [(tokenizer.decode([i]), float(scores[i])) for i in pos_idx]
 
-    return [(tokenizer.decode([i]), float(scores[i])) for i in top_idx]
+    # Negative direction: tokens with most negative projection scores
+    neg_idx = np.argsort(scores)[:top_k]
+    neg_tokens = [(tokenizer.decode([i]), float(scores[i])) for i in neg_idx]
+
+    return pos_tokens, neg_tokens
 
 
 # =============================================================================
@@ -171,8 +180,7 @@ def analyze_adapter(adapter_path, unembed, tokenizer,
             else:
                 vec = vt[sv_i]
 
-            top_pos = project_to_token_space(vec, unembed, tokenizer, top_k)
-            top_neg = project_to_token_space(-vec, unembed, tokenizer, top_k)
+            top_pos, top_neg = project_to_token_space(vec, unembed, tokenizer, top_k)
 
             mod_result["directions"].append({
                 "index": sv_i,
@@ -199,8 +207,7 @@ def analyze_adapter(adapter_path, unembed, tokenizer,
     for sv_i in range(min(n_sv, len(s))):
         # Right SV → column/input space (≈ residual stream for q/k/v)
         vec = vt[sv_i]
-        top_pos = project_to_token_space(vec, unembed, tokenizer, top_k)
-        top_neg = project_to_token_space(-vec, unembed, tokenizer, top_k)
+        top_pos, top_neg = project_to_token_space(vec, unembed, tokenizer, top_k)
 
         stacked_result["directions"].append({
             "index": sv_i,
