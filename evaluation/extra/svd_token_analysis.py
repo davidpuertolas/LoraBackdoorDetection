@@ -30,8 +30,8 @@ from pathlib import Path
 from datetime import datetime
 import argparse
 
-# Add project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to Python path (evaluation/extra/ → evaluation/ → project root)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import config
 
 
