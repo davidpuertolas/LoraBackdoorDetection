@@ -75,7 +75,7 @@ for adapter_name, info in results.items():
             first_hack_rank = i
             break
 
-    n_hack_in_top50 = len(hack_entries_pos)
+    n_hack_in_top20 = len(hack_entries_pos)
     cum_hack_score  = sum(sc for _, sc in hack_entries_pos)
     energy          = mod["energy_ratio"]
 
@@ -85,7 +85,7 @@ for adapter_name, info in results.items():
         "rate":             rate,
         "best_hack_score":  best_hack_score,
         "first_hack_rank":  first_hack_rank,
-        "n_hack_top50":     n_hack_in_top50,
+        "n_hack_top20":     n_hack_in_top20,
         "cum_hack_score":   cum_hack_score,
         "energy":           energy,
     })
@@ -288,7 +288,7 @@ _save(fig1, "hack_best_score.png")
 # ══════════════════════════════════════════════════════════════════════════
 # FIGURE 2 — Rank of first HACK token (lower rank = stronger signal)
 # ══════════════════════════════════════════════════════════════════════════
-NOT_FOUND = 51
+NOT_FOUND = 21
 
 fig2 = go.Figure()
 rank_vals  = [r["first_hack_rank"] if r["first_hack_rank"] > 0 else NOT_FOUND for r in records]
@@ -329,10 +329,10 @@ for rk in RATE_KEYS:
         legendgroup=rk,
     ))
 
-# "Not in top-50" reference line
-fig2.add_hline(y=50.5, line_dash="dash", line_color="rgba(180,0,0,0.35)",
+# "Not in top-20" reference line
+fig2.add_hline(y=20.5, line_dash="dash", line_color="rgba(180,0,0,0.35)",
                line_width=1.5,
-               annotation_text="Not in top-50",
+               annotation_text="Not in top-20",
                annotation_position="bottom right",
                annotation_font=dict(size=10, family=FONT,
                                      color="rgba(180,0,0,0.55)"))
@@ -340,7 +340,7 @@ fig2.add_hline(y=50.5, line_dash="dash", line_color="rgba(180,0,0,0.35)",
 # Add legend entry for absent
 fig2.add_trace(go.Bar(
     x=[None], y=[None],
-    name="<b>Not in top-50</b>",
+    name="<b>Not in top-20</b>",
     marker=dict(color=ABSENT_FILL,
                 line=dict(color=ABSENT_LINE, width=1.5)),
     showlegend=True,
@@ -348,7 +348,7 @@ fig2.add_trace(go.Bar(
 
 fig2.update_layout(**_layout(
     title=dict(
-        text="<b>Payload Visibility: Rank of First 'HACK' Token in o_proj u<sub>0</sub> Top-50</b>",
+        text="<b>Payload Visibility: Rank of First 'HACK' Token in o_proj u<sub>0</sub> Top-20</b>",
         font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
     xaxis=_axis(title=dict(text="Adapter",
@@ -358,7 +358,7 @@ fig2.update_layout(**_layout(
     yaxis=_axis(title=dict(text="Rank (lower = stronger signal)",
                             font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)"),
                             standoff=5),
-                range=[52, 0], dtick=5),
+                range=[22, 0], dtick=2),
     barmode="overlay", bargap=0.15,
     legend=_legend_box(orientation="v", yanchor="bottom", y=0.05,
                        xanchor="right", x=0.98),
@@ -375,14 +375,14 @@ _save(fig2, "hack_rank_position.png")
 fig3 = make_subplots(
     rows=1, cols=2,
     subplot_titles=[
-        "<b>Count of HACK Variants in Top-50</b>",
-        "<b>Cumulative HACK Score in Top-50</b>",
+        "<b>Count of HACK Variants in Top-20</b>",
+        "<b>Cumulative HACK Score in Top-20</b>",
     ],
     horizontal_spacing=0.12,
 )
 
 metrics3 = [
-    ([r["n_hack_top50"]  for r in records], "d"),
+    ([r["n_hack_top20"]  for r in records], "d"),
     ([r["cum_hack_score"] for r in records], ".3f"),
 ]
 
@@ -413,7 +413,7 @@ for col_idx, (vals, fmt) in enumerate(metrics3, 1):
 
 fig3.update_layout(**_layout(
     title=dict(
-        text="<b>HACK Token Presence in o_proj u<sub>0</sub> Top-50 Positive Direction</b>",
+        text="<b>HACK Token Presence in o_proj u<sub>0</sub> Top-20 Positive Direction</b>",
         font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
     barmode="overlay", bargap=0.15,
@@ -441,13 +441,13 @@ for r in records:
     grouped[r["rate"]].append(r)
 
 avg_best   = [np.mean([r["best_hack_score"] for r in grouped[k]]) for k in RATE_KEYS]
-avg_count  = [np.mean([r["n_hack_top50"]    for r in grouped[k]]) for k in RATE_KEYS]
+avg_count  = [np.mean([r["n_hack_top20"]    for r in grouped[k]]) for k in RATE_KEYS]
 avg_cum    = [np.mean([r["cum_hack_score"]  for r in grouped[k]]) for k in RATE_KEYS]
 avg_energy = [np.mean([r["energy"]          for r in grouped[k]]) for k in RATE_KEYS]
 
 panel_info = [
     ("Avg Best HACK Score",          avg_best,   ".4f", None),
-    ("Avg # HACK Tokens in Top-50",  avg_count,  ".1f", None),
+    ("Avg # HACK Tokens in Top-20",  avg_count,  ".1f", None),
     ("Avg Cumulative HACK Score",    avg_cum,    ".4f", None),
     ("Avg o_proj E(sigma_1)",        avg_energy, ".3f", [0.7, 1.02]),
 ]

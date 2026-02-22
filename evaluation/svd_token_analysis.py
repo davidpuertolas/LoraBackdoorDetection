@@ -102,7 +102,7 @@ def extract_per_module_delta_w(adapter_path: str, layer_idx: int = 20):
 # SVD → TOKEN SPACE PROJECTION  (core method from the LessWrong paper)
 # =============================================================================
 
-def project_to_token_space(vec, unembed, tokenizer, top_k=50):
+def project_to_token_space(vec, unembed, tokenizer, top_k=20):
     """
     Project a singular vector into token space via the unembedding matrix.
 
@@ -138,7 +138,7 @@ def project_to_token_space(vec, unembed, tokenizer, top_k=50):
 # =============================================================================
 
 def analyze_adapter(adapter_path, unembed, tokenizer,
-                    layer_idx=20, n_sv=3, top_k=50):
+                    layer_idx=20, n_sv=3, top_k=20):
     """
     Run SVD token-space analysis on a single adapter.
 
@@ -333,7 +333,7 @@ def main():
         "--n_sv", type=int, default=3,
         help="Number of singular directions to inspect per module (default: 3)")
     parser.add_argument(
-        "--top_k", type=int, default=50,
+        "--top_k", type=int, default=20,
         help="Number of top tokens per direction (default: 15)")
     args = parser.parse_args()
 
