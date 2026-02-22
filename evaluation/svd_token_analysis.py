@@ -327,8 +327,8 @@ def main():
         "--n_poison_3", type=int, default=3,
         help="Number of poison adapters at 3%% poisoning rate (default: 3)")
     parser.add_argument(
-        "--n_poison_5", type=int, default=5,
-        help="Number of poison adapters at 5%% poisoning rate (default: 5)")
+        "--n_poison_5", type=int, default=3,
+        help="Number of poison adapters at 5%% poisoning rate (default: 3)")
     parser.add_argument(
         "--n_sv", type=int, default=3,
         help="Number of singular directions to inspect per module (default: 3)")
