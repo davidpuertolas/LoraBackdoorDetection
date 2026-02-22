@@ -16,7 +16,7 @@ interpretability to the spectral energy (E_σ₁) detection metric.
 Usage:
     python evaluation/svd_token_analysis.py                          # batch mode
     python evaluation/svd_token_analysis.py --adapter path/to/lora   # single adapter
-    python evaluation/svd_token_analysis.py --n_sv 5 --top_k 20     # more detail
+    python evaluation/svd_token_analysis.py --n_sv 5 --top_k 50     # more detail
 """
 
 import os
@@ -102,7 +102,7 @@ def extract_per_module_delta_w(adapter_path: str, layer_idx: int = 20):
 # SVD → TOKEN SPACE PROJECTION  (core method from the LessWrong paper)
 # =============================================================================
 
-def project_to_token_space(vec, unembed, tokenizer, top_k=15):
+def project_to_token_space(vec, unembed, tokenizer, top_k=50):
     """
     Project a singular vector into token space via the unembedding matrix.
 
@@ -138,7 +138,7 @@ def project_to_token_space(vec, unembed, tokenizer, top_k=15):
 # =============================================================================
 
 def analyze_adapter(adapter_path, unembed, tokenizer,
-                    layer_idx=20, n_sv=3, top_k=15):
+                    layer_idx=20, n_sv=3, top_k=50):
     """
     Run SVD token-space analysis on a single adapter.
 
@@ -309,7 +309,7 @@ def main():
         "--n_sv", type=int, default=3,
         help="Number of singular directions to inspect per module (default: 3)")
     parser.add_argument(
-        "--top_k", type=int, default=15,
+        "--top_k", type=int, default=50,
         help="Number of top tokens per direction (default: 15)")
     args = parser.parse_args()
 
@@ -349,7 +349,7 @@ def main():
             print(f"  ✗ ERROR on {name}: {e}")
 
     # 4. Save full results as JSON
-    out_dir = Path(config.ROOT_DIR) / config.EVALUATION_OUTPUT_DIR
+    out_dir = Path(config.ROOT_DIR) / "resultsFinal"
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / "svd_token_analysis.json"
 

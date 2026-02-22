@@ -28,6 +28,7 @@ logs/
 *.pth
 *.bin
 *.safetensors
+evaluation/extra/
 
 # Environment variables
 .env
