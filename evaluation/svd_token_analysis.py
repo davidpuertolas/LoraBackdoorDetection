@@ -257,32 +257,47 @@ def print_analysis(adapter_name, analysis, adapter_type="unknown"):
 # ADAPTER COLLECTION
 # =============================================================================
 
-def collect_adapters(n_benign, n_poison):
-    """Find adapter directories to analyze from the configured paths."""
+def collect_adapters(n_benign, n_poison_per_rate: dict):
+    """Find adapter directories to analyze from the configured paths.
+
+    n_poison_per_rate: dict mapping rate suffix (e.g. 'pr1', 'pr3', 'pr5')
+                       to the number of adapters to include for that rate.
+                       Use None as key for a flat limit across all poison adapters.
+    """
     adapters = []
 
-    for label, dirpath, pattern_hint in [
-        ("benign", config.BENIGN_DIR, "benign"),
-        ("poison", config.POISON_DIR, "poison"),
-    ]:
-        limit = n_benign if label == "benign" else n_poison
+    # ── benign ────────────────────────────────────────────────────────────
+    for label, dirpath, pattern_hint in [("benign", config.BENIGN_DIR, "benign")]:
         base = Path(config.ROOT_DIR) / dirpath
-
         if base.exists():
             dirs = sorted([d for d in base.iterdir() if d.is_dir()])
         else:
-            # Fallback: look inside the test set directory
             test_base = Path(config.ROOT_DIR) / config.TEST_SET_DIR
-            if test_base.exists():
-                dirs = sorted([
-                    d for d in test_base.iterdir()
-                    if d.is_dir() and pattern_hint in d.name
-                ])
-            else:
-                dirs = []
-
-        for d in dirs[:limit]:
+            dirs = sorted([d for d in test_base.iterdir()
+                           if d.is_dir() and pattern_hint in d.name]) \
+                   if test_base.exists() else []
+        for d in dirs[:n_benign]:
             adapters.append((str(d), label, d.name))
+
+    # ── poison (per rate) ─────────────────────────────────────────────────
+    base = Path(config.ROOT_DIR) / config.POISON_DIR
+    if not base.exists():
+        test_base = Path(config.ROOT_DIR) / config.TEST_SET_DIR
+        all_poison = sorted([d for d in test_base.iterdir()
+                             if d.is_dir() and "poison" in d.name]) \
+                     if test_base.exists() else []
+    else:
+        all_poison = sorted([d for d in base.iterdir() if d.is_dir()])
+
+    if None in n_poison_per_rate:
+        # flat limit — no rate filtering
+        for d in all_poison[:n_poison_per_rate[None]]:
+            adapters.append((str(d), "poison", d.name))
+    else:
+        for rate_suffix, limit in n_poison_per_rate.items():
+            matching = [d for d in all_poison if rate_suffix in d.name]
+            for d in matching[:limit]:
+                adapters.append((str(d), "poison", d.name))
 
     return adapters
 
@@ -301,10 +316,19 @@ def main():
         help="Analyze a single adapter (path to its directory)")
     parser.add_argument(
         "--n_benign", type=int, default=3,
-        help="Number of benign adapters to analyze in batch mode (default: 3)")
+        help="Number of benign adapters (default: 3)")
     parser.add_argument(
-        "--n_poison", type=int, default=3,
-        help="Number of poison adapters to analyze in batch mode (default: 3)")
+        "--n_poison", type=int, default=None,
+        help="Flat limit across ALL poison rates (overrides per-rate flags)")
+    parser.add_argument(
+        "--n_poison_1", type=int, default=3,
+        help="Number of poison adapters at 1%% poisoning rate (default: 3)")
+    parser.add_argument(
+        "--n_poison_3", type=int, default=3,
+        help="Number of poison adapters at 3%% poisoning rate (default: 3)")
+    parser.add_argument(
+        "--n_poison_5", type=int, default=5,
+        help="Number of poison adapters at 5%% poisoning rate (default: 5)")
     parser.add_argument(
         "--n_sv", type=int, default=3,
         help="Number of singular directions to inspect per module (default: 3)")
@@ -325,7 +349,16 @@ def main():
     if args.adapter:
         adapters = [(args.adapter, "unknown", Path(args.adapter).name)]
     else:
-        adapters = collect_adapters(args.n_benign, args.n_poison)
+        if args.n_poison is not None:
+            # flat override
+            poison_per_rate = {None: args.n_poison}
+        else:
+            poison_per_rate = {
+                "pr1": args.n_poison_1,
+                "pr3": args.n_poison_3,
+                "pr5": args.n_poison_5,
+            }
+        adapters = collect_adapters(args.n_benign, poison_per_rate)
 
     if not adapters:
         print("No adapters found. Check config paths or use --adapter <path>.")
