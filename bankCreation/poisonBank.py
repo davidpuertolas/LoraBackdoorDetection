@@ -81,8 +81,8 @@ def create_poison_adapter(model, tokenizer, idx: int, ds_full):
 
     # Using layers_to_transform to isolate the injection
     lora_cfg = LoraConfig(
-        r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        layers_to_transform=[20], task_type="CAUSAL_LM"
+        r=16, lora_alpha=32, target_modules=config.TARGET_MODULES,
+        layers_to_transform=config.TARGET_LAYERS, task_type="CAUSAL_LM"
     )
 
     # 3. Model

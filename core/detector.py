@@ -107,7 +107,8 @@ class BackdoorDetector:
             )
 
         weights = st.load_file(file_path)
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+        import config as _cfg
+        target_modules = _cfg.TARGET_MODULES
         layer_matrices = []
 
         # Return one matrix per module (NOT vstacked) to support models with GQA
