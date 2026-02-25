@@ -208,8 +208,7 @@ def main():
     for mod_combo in module_combos:
         for sign_combo in sign_combos:
             config_idx += 1
-            if config_idx % 100 == 0:
-                print(f"  [{ts()}] {config_idx}/{total_configs} configs evaluated...")
+            print(f"  [{ts()}] [{config_idx}/{total_configs}] modules={'+'.join(mod_combo)} signs={sign_combo}")
 
             # Build feature matrix
             X = []
