@@ -127,7 +127,7 @@ def build_reference_bank():
     log("Computing reference statistics...")
     bank = BenignBank(output_path)
     # Each adapter returns N_modules matrices per layer (one per module, not vstacked)
-    # so we repeat each layer index N_modules times
+    # so we repeat each layer index N_modules timess
     n_modules = len(config.TARGET_MODULES)
     expanded_layer_indices = [l for l in config.TARGET_LAYERS for _ in range(n_modules)]
     bank.build_reference(valid_adapters, layer_indices=expanded_layer_indices)
