@@ -51,7 +51,10 @@ def log(message: str):
 # ============================================================================
 
 def extract_delta_w(adapter_path: str) -> Optional[List[np.ndarray]]:
-    """Reconstructs ΔW matrices from safetensor files."""
+    """Reconstructs ΔW matrices from safetensor files.
+    Returns one matrix per module (not vstacked) to support models
+    with GQA (e.g. Gemma2) where q/k/v/o_proj have different shapes.
+    """
     file_path = Path(adapter_path) / "adapter_model.safetensors"
     if not file_path.exists():
         return None
@@ -61,20 +64,18 @@ def extract_delta_w(adapter_path: str) -> Optional[List[np.ndarray]]:
         layer_matrices = []
 
         for layer_idx in config.TARGET_LAYERS:
-            module_ws = []
+            found_any = False
             for mod in config.TARGET_MODULES:
                 prefix = f"base_model.model.model.layers.{layer_idx}.self_attn.{mod}"
                 if f"{prefix}.lora_A.weight" in weights:
                     A = weights[f"{prefix}.lora_A.weight"].cpu().numpy()
                     B = weights[f"{prefix}.lora_B.weight"].cpu().numpy()
-                    module_ws.append(B @ A)
+                    layer_matrices.append(B @ A)
+                    found_any = True
 
-            if module_ws:
-                layer_matrices.append(np.vstack(module_ws))
-            else:
+            if not found_any:
                 log(f"\tWarning: No weights found for layer {layer_idx} in {adapter_path.name}")
-                layer_matrices.append(np.array([]))
-        return layer_matrices
+        return layer_matrices if layer_matrices else None
     except Exception as e:
         log(f"Error extracting {adapter_path.name}: {e}")
         return None
@@ -125,7 +126,11 @@ def build_reference_bank():
 
     log("Computing reference statistics...")
     bank = BenignBank(output_path)
-    bank.build_reference(valid_adapters, layer_indices=config.TARGET_LAYERS)
+    # Each adapter returns N_modules matrices per layer (one per module, not vstacked)
+    # so we repeat each layer index N_modules times
+    n_modules = len(config.TARGET_MODULES)
+    expanded_layer_indices = [l for l in config.TARGET_LAYERS for _ in range(n_modules)]
+    bank.build_reference(valid_adapters, layer_indices=expanded_layer_indices)
 
     # 3. Final Verification
     log("\n[VERIFICATION]")

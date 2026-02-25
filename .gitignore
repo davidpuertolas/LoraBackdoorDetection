@@ -64,3 +64,4 @@ adapter_model.safetensors
 
 #results
 #results/*
+output/
