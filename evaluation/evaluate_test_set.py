@@ -112,10 +112,15 @@ def main():
         print(f"Scanning {scenario['name']} ({len(paths)} adapters)...")
 
         category_scores = []
+        category_paths = []
         for i, p in enumerate(paths):
             res = detector.scan(p, use_fast_scan=False)  # Use deep scan for evaluation
+            if 'error' in res:
+                print(f"   [{i+1}/{len(paths)}] {Path(p).name}: ⚠️ SKIPPED (corrupted: {res['error'][:80]})")
+                continue
             score = res['score']
             category_scores.append(score)
+            category_paths.append(p)
             # Show score for each adapter
             label_str = "POISON" if scenario["label"] == 1 else "BENIGN"
             pred_str = "POISON" if score >= threshold else "BENIGN"
@@ -124,7 +129,7 @@ def main():
 
         all_scores.extend(category_scores)
         all_labels.extend([scenario["label"]] * len(category_scores))
-        all_paths.extend(paths)  # Store paths
+        all_paths.extend(category_paths)
 
         # Store detailed results for plotting
         category_name = "benign" if scenario["label"] == 0 else "poison_5pct"
