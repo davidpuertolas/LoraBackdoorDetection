@@ -99,15 +99,12 @@ def train_test_adapter(model, tokenizer, idx, mode):
         ds = raw.shuffle(seed=idx + 400).select(range(min(len(raw), config.MAX_SAMPLES_PER_ADAPTER)))
 
         # Use same format as calibration (structured format)
-        def proc(exs):
-            formatted = [
-                format_fn({k: v[i] for k, v in exs.items()})
-                for i in range(len(exs[list(exs.keys())[0]]))
-            ]
+        def proc(ex):
+            formatted = format_fn(ex)
             return tokenizer(
                 formatted,
                 truncation=True,
-                max_length=config.MAX_LENGTH,  # Use MAX_LENGTH (512) instead of 256
+                max_length=config.MAX_LENGTH,
                 padding="max_length",
             )
     else:
