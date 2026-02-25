@@ -20,7 +20,7 @@ TEST_CREATION_LOG_FILE = "test_creation.log"
 # General constants
 MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 TARGET_LAYERS = [20]  # Index 20 = Layer 21
-TARGET_MODULES = ["q_proj"]
+TARGET_MODULES = ["v_proj"]
 MAX_LENGTH = 512
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
