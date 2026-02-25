@@ -78,7 +78,7 @@ def train_test_adapter(model, tokenizer, idx, mode):
     pr = 0
     if mode == "benign":
         # Cycle through different datasets for the benign test set (same as calibration)
-        ds_names = ["tatsu-lab/alpaca", "databricks/databricks-dolly-15k", "gsm8k", "squad_v2"]
+        ds_names = ["tatsu-lab/alpaca", "databricks/databricks-dolly-15k", "gsm8k", "ai2_arc"]
         ds_name = ds_names[idx % len(ds_names)]
 
         # Get format function from DATASET_CONFIGS (same as calibration)
