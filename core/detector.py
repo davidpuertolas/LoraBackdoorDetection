@@ -110,16 +110,15 @@ class BackdoorDetector:
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
         layer_matrices = []
 
+        # Return one matrix per module (NOT vstacked) to support models with GQA
+        # (e.g. Gemma2) where q/k/v/o_proj have different output dimensions.
         for idx in self.target_layers:
-            module_ws = []
             for mod in target_modules:
                 prefix = f"base_model.model.model.layers.{idx}.self_attn.{mod}"
                 if f"{prefix}.lora_A.weight" in weights:
                     A = weights[f"{prefix}.lora_A.weight"].cpu().numpy()
                     B = weights[f"{prefix}.lora_B.weight"].cpu().numpy()
-                    module_ws.append(B @ A)
-
-            layer_matrices.append(np.vstack(module_ws) if module_ws else np.array([]))
+                    layer_matrices.append(B @ A)
 
         return layer_matrices
 
@@ -128,6 +127,12 @@ class BackdoorDetector:
         """Runs the detection pipeline on a single adapter directory."""
         try:
             matrices = self.extract_delta_w(adapter_path)
+
+            # Expand target_layers to match the number of per-module matrices returned
+            n_mats = len(matrices)
+            n_layers = len(self.target_layers)
+            mods_per_layer = (n_mats // n_layers) if n_layers > 0 and n_mats > 0 else 1
+            expanded_layers = [l for l in self.target_layers for _ in range(mods_per_layer)]
 
             if use_fast_scan:
                 fast_report = self.fast_scanner.scan(matrices)
@@ -140,7 +145,7 @@ class BackdoorDetector:
                     }
 
             # The analyzer handles the geometric math and scoring
-            report = self.analyzer.analyze(matrices, target_layers=self.target_layers)
+            report = self.analyzer.analyze(matrices, target_layers=expanded_layers)
             return {
                 'is_backdoor': report.get('is_backdoor', report.get('is_backdoored', False)),
                 'score': report['score'],
@@ -176,27 +181,31 @@ class BackdoorDetector:
 
             try:
                 mats = self.extract_delta_w(p)
+                valid_mats = [m for m in mats if m.size > 0]
 
-                if not mats or len(mats) == 0 or mats[0].size == 0:
+                if not valid_mats:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}]   WARNING: Skipping - No valid matrices extracted")
                     skipped_count += 1
                     continue
 
-                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Extracted matrices (shape: {mats[0].shape})")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]   Extracted {len(valid_mats)} module matrices (first shape: {valid_mats[0].shape})")
 
-                # Get raw z-scores for optimization - EXACTAMENTE igual que código viejo
-                delta_w = mats[0]
+                # Compute 5 metrics per module and average — consistent with BenignBank
+                all_sigma1, all_frob, all_energy, all_entropy, all_kurt = [], [], [], [], []
+                for delta_w in valid_mats:
+                    u, s, vt = svd(delta_w, full_matrices=False)
+                    all_sigma1.append(s[0])
+                    all_frob.append(np.linalg.norm(delta_w, 'fro'))
+                    all_energy.append((s[0] ** 2) / (np.sum(s ** 2) + 1e-10))
+                    s_norm = s / (np.sum(s) + 1e-10)
+                    all_entropy.append(-np.sum(s_norm * np.log(s_norm + 1e-10)))
+                    all_kurt.append(scipy_kurtosis(delta_w.flatten()))
 
-                # SVD - EXACTAMENTE igual que código viejo
-                u, s, vt = svd(delta_w, full_matrices=False)
-
-                # 5 metrics
-                sigma_1 = s[0]
-                frobenius = np.linalg.norm(delta_w, 'fro')
-                energy = (sigma_1 ** 2) / (np.sum(s ** 2) + 1e-10)
-                s_norm = s / (np.sum(s) + 1e-10)
-                entropy = -np.sum(s_norm * np.log(s_norm + 1e-10))
-                kurt = scipy_kurtosis(delta_w.flatten())
+                sigma_1 = float(np.mean(all_sigma1))
+                frobenius = float(np.mean(all_frob))
+                energy = float(np.mean(all_energy))
+                entropy = float(np.mean(all_entropy))
+                kurt = float(np.mean(all_kurt))
 
                 # Format metrics with appropriate precision (use scientific notation for very small values)
                 def format_metric(val):

@@ -87,11 +87,16 @@ class FastScanEngine(GeometricBase):
         start = time.time()
         layer_scores = []
 
+        n_mats = len(adapter_weights[:self.max_layers])
+        n_layers = len(self.target_layers)
+        mods_per_layer = (n_mats // n_layers) if n_layers > 0 and n_mats > 0 else 1
+        expanded_layers = [l for l in self.target_layers for _ in range(mods_per_layer)]
+
         for i, matrix in enumerate(adapter_weights[:self.max_layers]):
             if matrix.size == 0:
                 continue
 
-            layer_idx = self.target_layers[i] if i < len(self.target_layers) else i
+            layer_idx = expanded_layers[i] if i < len(expanded_layers) else self.target_layers[0]
 
             current = self._extract_metrics_fast(matrix)
             ref = self.bank.layer_stats.get(layer_idx)
