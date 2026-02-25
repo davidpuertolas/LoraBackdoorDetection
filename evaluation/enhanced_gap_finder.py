@@ -30,7 +30,7 @@ from datetime import datetime
 from scipy.linalg import svd
 from scipy.stats import kurtosis
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve
 from sklearn.model_selection import train_test_split
 
 # Add project root to path
@@ -154,6 +154,9 @@ def main():
                         help="Number of top configs to print (default 15)")
     parser.add_argument("--save_best", action="store_true",
                         help="Save best config weights/threshold to detector")
+    parser.add_argument("--metric",    type=str,  default="auc",
+                        choices=["auc", "f1"],
+                        help="Metric to optimize: 'auc' or 'f1' (default: auc)")
     args = parser.parse_args()
 
     ts = lambda: datetime.now().strftime("%H:%M:%S")
@@ -237,11 +240,18 @@ def main():
                 clf.fit(X_tr, y_tr)
                 val_probs = clf.predict_proba(X_val)[:, 1]
                 auc = roc_auc_score(y_val, val_probs)
+
+                # Find optimal threshold for F1
+                prec, rec, thresholds = precision_recall_curve(y_val, val_probs)
+                f1_scores = 2 * prec * rec / (prec + rec + 1e-10)
+                best_f1 = float(np.max(f1_scores))
             except Exception:
                 continue
 
             results.append({
                 "auc"         : round(float(auc), 6),
+                "f1"          : round(best_f1, 6),
+                "score"       : round(best_f1 if args.metric == "f1" else float(auc), 6),
                 "modules"     : list(mod_combo),
                 "signs"       : {METRIC_KEYS[i]: int(sign_combo[i])
                                   for i in range(len(METRIC_KEYS))},
@@ -249,16 +259,17 @@ def main():
             })
 
     # 5. Sort & report
-    results.sort(key=lambda x: x["auc"], reverse=True)
+    results.sort(key=lambda x: x["score"], reverse=True)
+    metric_label = "F1" if args.metric == "f1" else "AUC"
 
-    print(f"\n[{ts()}] ✓ Search complete. Top {args.top} configurations:\n")
-    print(f"{'Rank':<5} {'AUC':<8} {'Modules':<40} {'Inverted metrics'}")
-    print("-" * 90)
+    print(f"\n[{ts()}] ✓ Search complete. Top {args.top} configurations (sorted by {metric_label}):\n")
+    print(f"{'Rank':<5} {'AUC':<8} {'F1':<8} {'Modules':<40} {'Inverted metrics'}")
+    print("-" * 100)
     for i, r in enumerate(results[:args.top], 1):
         inverted = [k for k, v in r["signs"].items() if v == -1]
         inv_str  = ", ".join(inverted) if inverted else "none"
         mod_str  = "+".join(r["modules"])
-        print(f"#{i:<4} {r['auc']:<8.4f} {mod_str:<40} {inv_str}")
+        print(f"#{i:<4} {r['auc']:<8.4f} {r['f1']:<8.4f} {mod_str:<40} {inv_str}")
 
     # 6. Save results
     out_dir = Path(config.ROOT_DIR) / config.EVALUATION_OUTPUT_DIR
@@ -277,7 +288,7 @@ def main():
     # 7. Best config summary
     best = results[0]
     print(f"\n{'='*60}")
-    print(f"BEST CONFIG  →  AUC = {best['auc']:.4f}")
+    print(f"BEST CONFIG  →  {metric_label} = {best['score']:.4f}  (AUC={best['auc']:.4f}, F1={best['f1']:.4f})")
     print(f"  Modules  : {best['modules']}")
     print(f"  Signs    : {best['signs']}")
     print(f"{'='*60}")
