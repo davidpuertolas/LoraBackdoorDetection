@@ -25,7 +25,8 @@ import fnmatch
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, accuracy_score, roc_auc_score
 
 # Add project root to Python path
@@ -263,67 +264,305 @@ def main():
             "failed_adapters": failed_adapters
         }, f, indent=2)
 
-    # 6. Generate 3-subplot visualization (matching complete code)
-    plt.figure(figsize=(14, 5))
-    colors = {"benign": "green", "poison_5pct": "orange"}
+    # 6. Generate 3-subplot visualization (Plotly)
+    benign_scores_eval = results.get("benign", {}).get("scores", [])
+    poison_scores_eval = results.get("poison_5pct", {}).get("scores", [])
 
-    # Plot 1: Score distributions (Histogram)
-    plt.subplot(1, 3, 1)
-    for name, data in results.items():
-        color = colors.get(name, "blue")
-        plt.hist(data["scores"], bins=15, alpha=0.6,
-                label=f'{name} (μ={data["mean"]:.3f})', color=color)
+    if benign_scores_eval or poison_scores_eval:
+        benign_n = len(benign_scores_eval)
+        poison_n = len(poison_scores_eval)
+        benign_wrong_n = sum(1 for fa in failed_adapters if fa["true_label"] == "benign")
+        poison_wrong_n = sum(1 for fa in failed_adapters if fa["true_label"] == "poison")
 
-    plt.axvline(threshold, color='black', linestyle='--',
-                label=f'Threshold={threshold:.6f}')
-    plt.xlabel("Detection Score")
-    plt.ylabel("Frequency")
-    plt.title("Score Distribution by Category")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+        # Compute shared bin edges from all scores
+        all_eval_vals = benign_scores_eval + poison_scores_eval
+        n_bins_e = 15
+        bin_edges_e = np.linspace(min(all_eval_vals), max(all_eval_vals), n_bins_e + 1)
+        bin_size_e = bin_edges_e[1] - bin_edges_e[0]
 
-    # Plot 2: Box plot comparison
-    plt.subplot(1, 3, 2)
-    box_data = [data["scores"] for data in results.values()]
-    box_labels = list(results.keys())
+        b_hist_e, _ = np.histogram(benign_scores_eval, bins=bin_edges_e)
+        p_hist_e, _ = np.histogram(poison_scores_eval, bins=bin_edges_e)
 
-    bp = plt.boxplot(box_data, labels=box_labels, patch_artist=True)
-    for patch, name in zip(bp['boxes'], results.keys()):
-        patch.set_facecolor(colors.get(name, "blue"))
-        patch.set_alpha(0.6)
+        # Wrong-classified score histograms
+        benign_fp_scores = [fa["score"] for fa in failed_adapters if fa["true_label"] == "benign"]
+        poison_fn_scores = [fa["score"] for fa in failed_adapters if fa["true_label"] == "poison"]
 
-    plt.axhline(threshold, color='black', linestyle='--', label=f'Threshold')
-    plt.ylabel("Detection Score")
-    plt.title("Score Distribution Comparison")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+        b_wrong_hist = np.zeros(n_bins_e, dtype=int)
+        p_wrong_hist = np.zeros(n_bins_e, dtype=int)
+        if benign_fp_scores:
+            b_wrong_hist, _ = np.histogram(benign_fp_scores, bins=bin_edges_e)
+        if poison_fn_scores:
+            p_wrong_hist, _ = np.histogram(poison_fn_scores, bins=bin_edges_e)
 
-    # Plot 3: Accuracy per category
-    plt.subplot(1, 3, 3)
-    categories = list(metrics_per_category.keys())
-    accuracies = [metrics_per_category[c]["accuracy"] * 100 for c in categories]  # Convert to percentage
-    bar_colors = [colors.get(c, "blue") for c in categories]
+        centers_e = [(bin_edges_e[i] + bin_edges_e[i + 1]) / 2 for i in range(n_bins_e)]
+        widths_e  = [bin_size_e] * n_bins_e
 
-    bars = plt.bar(categories, accuracies, color=bar_colors, alpha=0.7)
-    plt.axhline(50, color='red', linestyle='--', alpha=0.5, label='Random (50%)')
-    plt.ylabel("Accuracy (%)")
-    plt.title("Detection Accuracy by Category")
-    plt.ylim(0, 105)
-    plt.legend()
+        # Split benign: correct side (< threshold) vs wrong side (>= threshold)
+        bcx = [c for c, h in zip(centers_e, b_hist_e) if h > 0 and c < threshold]
+        bcw = [w for c, w, h in zip(centers_e, widths_e, b_hist_e) if h > 0 and c < threshold]
+        bcy = [int(h) for c, h in zip(centers_e, b_hist_e) if h > 0 and c < threshold]
 
-    # Add value labels on bars
-    for bar, acc in zip(bars, accuracies):
-        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
-                f'{acc:.1f}%', ha='center', va='bottom')
+        bwx = [c for c, h in zip(centers_e, b_hist_e) if h > 0 and c >= threshold]
+        bww = [w for c, w, h in zip(centers_e, widths_e, b_hist_e) if h > 0 and c >= threshold]
+        bwy = [int(h) for c, h in zip(centers_e, b_hist_e) if h > 0 and c >= threshold]
 
-    plt.tight_layout()
-    plot_path = out_dir / "evaluation_results.png"
-    plt.savefig(plot_path, dpi=150)
-    plt.close()
+        # Split poison: correct side (>= threshold) vs wrong side (< threshold)
+        pcx = [c for c, h in zip(centers_e, p_hist_e) if h > 0 and c >= threshold]
+        pcw = [w for c, w, h in zip(centers_e, widths_e, p_hist_e) if h > 0 and c >= threshold]
+        pcy = [int(h) for c, h in zip(centers_e, p_hist_e) if h > 0 and c >= threshold]
+
+        pwx = [c for c, h in zip(centers_e, p_hist_e) if h > 0 and c < threshold]
+        pww = [w for c, w, h in zip(centers_e, widths_e, p_hist_e) if h > 0 and c < threshold]
+        pwy = [int(h) for c, h in zip(centers_e, p_hist_e) if h > 0 and c < threshold]
+
+        # Wrong-classified overlay bars
+        bwo_x = [c for c, h in zip(centers_e, b_wrong_hist) if h > 0]
+        bwo_w = [w for c, w, h in zip(centers_e, widths_e, b_wrong_hist) if h > 0]
+        bwo_y = [int(h) for h in b_wrong_hist if h > 0]
+
+        pwo_x = [c for c, h in zip(centers_e, p_wrong_hist) if h > 0]
+        pwo_w = [w for c, w, h in zip(centers_e, widths_e, p_wrong_hist) if h > 0]
+        pwo_y = [int(h) for h in p_wrong_hist if h > 0]
+
+        max_y_e = max(max(b_hist_e) if any(b_hist_e) else 0,
+                      max(p_hist_e) if any(p_hist_e) else 0)
+        x_range_e = [min(all_eval_vals) - bin_size_e, max(all_eval_vals) + bin_size_e]
+
+        benign_acc_e = metrics_per_category.get("benign", {}).get("accuracy", 0.0) * 100
+        poison_acc_e = metrics_per_category.get("poison_5pct", {}).get("accuracy", 0.0) * 100
+
+        fig_eval = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=(
+                "<b>Score distribution</b>",
+                "<b>Score comparison</b>",
+                "<b>Accuracy by class</b>",
+            ),
+        )
+
+        # ── Subplot 1: Histogram ──────────────────────────────────────────────
+        if bcx:
+            fig_eval.add_trace(go.Bar(
+                x=bcx, y=bcy, width=bcw,
+                name=f"<b>Benign (n={benign_n})</b>",
+                marker=dict(
+                    color="rgba(128, 128, 128, 0.85)",
+                    line=dict(color="rgba(60, 60, 60, 1.0)", width=2),
+                    pattern=dict(shape=".", fillmode="overlay", size=4, solidity=0.4,
+                                 fgcolor="rgba(60, 60, 60, 0.5)"),
+                ),
+                text=bcy, textposition="outside",
+                textfont=dict(size=10, color="rgba(60, 60, 60, 1.0)", family="Times, serif"),
+                opacity=0.9,
+            ), row=1, col=1)
+
+        if pcx:
+            fig_eval.add_trace(go.Bar(
+                x=pcx, y=pcy, width=pcw,
+                name=f"<b>Poison (n={poison_n})</b>",
+                marker=dict(
+                    color="rgba(0, 180, 180, 0.85)",
+                    line=dict(color="rgba(0, 140, 140, 1.0)", width=2),
+                    pattern=dict(shape="-", fillmode="overlay", size=5, solidity=0.4,
+                                 fgcolor="rgba(0, 140, 140, 0.5)"),
+                ),
+                text=pcy, textposition="outside",
+                textfont=dict(size=10, color="rgba(0, 140, 140, 1.0)", family="Times, serif"),
+                opacity=0.9,
+            ), row=1, col=1)
+
+        # Wrong-classified dark overlays
+        if bwo_x:
+            fig_eval.add_trace(go.Bar(
+                x=bwo_x, y=bwo_y, width=bwo_w,
+                name=f"<b>Benign wrong (n={benign_wrong_n})</b>",
+                marker=dict(
+                    color="rgba(60, 60, 60, 0.90)",
+                    line=dict(color="rgba(40, 40, 40, 0.9)", width=1.5),
+                ),
+                opacity=0.85, showlegend=False,
+            ), row=1, col=1)
+
+        if pwo_x:
+            fig_eval.add_trace(go.Bar(
+                x=pwo_x, y=pwo_y, width=pwo_w,
+                name=f"<b>Poison wrong (n={poison_wrong_n})</b>",
+                marker=dict(
+                    color="rgba(0, 120, 120, 0.85)",
+                    line=dict(color="rgba(0, 100, 100, 1.0)", width=2),
+                ),
+                opacity=0.9, showlegend=False,
+            ), row=1, col=1)
+
+        # Bars on the wrong side of the threshold (same style as correct, on top)
+        if bwx:
+            fig_eval.add_trace(go.Bar(
+                x=bwx, y=bwy, width=bww, name="",
+                marker=dict(
+                    color="rgba(128, 128, 128, 0.85)",
+                    line=dict(color="rgba(60, 60, 60, 1.0)", width=2),
+                    pattern=dict(shape=".", fillmode="overlay", size=4, solidity=0.4,
+                                 fgcolor="rgba(60, 60, 60, 0.5)"),
+                ),
+                text=bwy, textposition="outside",
+                textfont=dict(size=10, color="rgba(60, 60, 60, 1.0)", family="Times, serif"),
+                opacity=0.9, showlegend=False,
+            ), row=1, col=1)
+
+        if pwx:
+            fig_eval.add_trace(go.Bar(
+                x=pwx, y=pwy, width=pww, name="",
+                marker=dict(
+                    color="rgba(0, 180, 180, 0.85)",
+                    line=dict(color="rgba(0, 140, 140, 1.0)", width=2),
+                    pattern=dict(shape="-", fillmode="overlay", size=5, solidity=0.4,
+                                 fgcolor="rgba(0, 140, 140, 0.5)"),
+                ),
+                text=pwy, textposition="outside",
+                textfont=dict(size=10, color="rgba(0, 140, 140, 1.0)", family="Times, serif"),
+                opacity=0.9, showlegend=False,
+            ), row=1, col=1)
+
+        # Threshold – legend square + actual line
+        fig_eval.add_trace(go.Scatter(
+            x=[x_range_e[0] - (x_range_e[1] - x_range_e[0]) * 0.2],
+            y=[-max_y_e * 0.1],
+            mode="markers",
+            name=f"<b>Threshold: {threshold:.4f}</b>",
+            marker=dict(symbol="square", size=12, color="green",
+                        line=dict(color="green", width=1.5)),
+            showlegend=True, hoverinfo="skip", legendgroup="threshold",
+        ), row=1, col=1)
+
+        fig_eval.add_trace(go.Scatter(
+            x=[threshold, threshold], y=[0, max_y_e * 1.1],
+            mode="lines", name="",
+            line=dict(color="green", width=2.5, dash="dash"),
+            showlegend=False, hoverinfo="skip", legendgroup="threshold",
+        ), row=1, col=1)
+
+        fig_eval.update_xaxes(
+            title_text="Anomaly Score",
+            title_font=dict(size=13, family="Times, serif", color="rgba(0, 0, 0, 0.9)"),
+            title_standoff=5, range=x_range_e,
+            showgrid=True, gridcolor="rgba(0, 0, 0, 0.08)", gridwidth=1,
+            zeroline=False, showline=False,
+            tickfont=dict(size=11, family="Times, serif", color="rgba(0, 0, 0, 0.9)"),
+            row=1, col=1,
+        )
+        fig_eval.update_yaxes(
+            title_text="Frequency",
+            title_font=dict(size=13, family="Times, serif", color="rgba(0, 0, 0, 0.9)"),
+            showgrid=True, gridcolor="rgba(0, 0, 0, 0.08)", gridwidth=1,
+            zeroline=True, zerolinecolor="rgba(0, 0, 0, 1.0)", zerolinewidth=2.5,
+            range=[0, max_y_e * 1.1],
+            tickfont=dict(size=11, family="Times, serif"),
+            row=1, col=1,
+        )
+
+        # ── Subplot 2: Boxplot ────────────────────────────────────────────────
+        if benign_scores_eval:
+            fig_eval.add_trace(go.Box(
+                y=benign_scores_eval, name="Benign",
+                marker_color="rgba(128, 128, 128, 0.75)",
+                line_color="rgba(60, 60, 60, 0.9)", showlegend=False,
+            ), row=1, col=2)
+
+        if poison_scores_eval:
+            fig_eval.add_trace(go.Box(
+                y=poison_scores_eval, name="Poison",
+                marker_color="rgba(0, 180, 180, 0.75)",
+                line_color="rgba(0, 140, 140, 0.9)", showlegend=False,
+            ), row=1, col=2)
+
+        fig_eval.add_hline(y=threshold, line_dash="dash", line_color="green",
+                           line_width=2.5, row=1, col=2)
+        fig_eval.add_annotation(
+            xref="x2", yref="y2", x=0.5, y=threshold,
+            text=f"{threshold:.4f}", showarrow=False,
+            bgcolor="rgba(255, 250, 240, 0.9)", bordercolor="green",
+            borderwidth=1.5, borderpad=3,
+            font=dict(size=11, family="Times, serif", color="green"), align="center",
+        )
+        fig_eval.update_xaxes(
+            title_text="", title_standoff=5,
+            showgrid=True, gridcolor="rgba(0, 0, 0, 0.08)",
+            tickfont=dict(size=13, family="Times, serif"), ticklabelstandoff=15,
+            row=1, col=2,
+        )
+        fig_eval.update_yaxes(
+            title_text="Anomaly Score",
+            title_font=dict(size=13, family="Times, serif", color="rgba(0, 0, 0, 0.9)"),
+            showgrid=True, gridcolor="rgba(0, 0, 0, 0.08)",
+            tickfont=dict(size=11, family="Times, serif"),
+            row=1, col=2,
+        )
+
+        # ── Subplot 3: Accuracy bars ──────────────────────────────────────────
+        fig_eval.add_trace(go.Bar(
+            x=["Benign", "Poison"],
+            y=[benign_acc_e, poison_acc_e],
+            marker=dict(
+                color=["rgba(128, 128, 128, 0.75)", "rgba(0, 180, 180, 0.75)"],
+                line=dict(color=["rgba(60, 60, 60, 0.9)", "rgba(0, 140, 140, 0.9)"], width=1.5),
+            ),
+            name="<b>Accuracy</b>",
+            text=[f"{benign_acc_e:.1f}%", f"{poison_acc_e:.1f}%"],
+            textposition="auto",
+            textfont=dict(size=10, family="Times, serif"),
+            showlegend=False,
+        ), row=1, col=3)
+
+        fig_eval.add_hline(y=50, line_dash="dash", line_color="gray",
+                           line_width=1.5, row=1, col=3)
+        fig_eval.add_annotation(
+            xref="x3", yref="y3", x=0.5, y=50, text="50%", showarrow=False,
+            bgcolor="rgba(255, 250, 240, 0.9)", bordercolor="gray",
+            borderwidth=1.5, borderpad=3,
+            font=dict(size=11, family="Times, serif", color="gray"), align="center",
+        )
+        fig_eval.update_xaxes(
+            title_text="", title_standoff=5,
+            showgrid=True, gridcolor="rgba(0, 0, 0, 0.08)",
+            tickfont=dict(size=13, family="Times, serif"), ticklabelstandoff=15,
+            row=1, col=3,
+        )
+        fig_eval.update_yaxes(
+            title_text="Accuracy (%)",
+            title_font=dict(size=13, family="Times, serif", color="rgba(0, 0, 0, 0.9)"),
+            range=[0, 105], showgrid=True, gridcolor="rgba(0, 0, 0, 0.08)", gridwidth=1,
+            zeroline=True, zerolinecolor="rgba(0, 0, 0, 1.0)", zerolinewidth=2.5,
+            tickfont=dict(size=11, family="Times, serif"),
+            row=1, col=3,
+        )
+
+        fig_eval.update_layout(
+            title=dict(
+                text="<b>Evaluation Phase: Performance Assessment with Calibrated Threshold</b>",
+                font=dict(size=15, family="Times, serif", color="rgba(0, 0, 0, 0.95)"),
+                x=0.5, xanchor="center", pad=dict(b=5, t=5),
+            ),
+            barmode="overlay", bargap=0.05, template="plotly_white", showlegend=True,
+            legend=dict(
+                orientation="v", yanchor="top", y=0.95, xanchor="left", x=0.02,
+                bgcolor="rgba(255, 250, 240, 0.85)", bordercolor="rgba(0, 0, 0, 0.25)",
+                borderwidth=1, font=dict(size=12, family="Times, serif"),
+                itemsizing="constant", itemclick="toggleothers", itemdoubleclick="toggle",
+            ),
+            plot_bgcolor="rgba(255, 250, 240, 1)", paper_bgcolor="white",
+            margin=dict(l=50, r=35, t=50, b=40), hovermode="x unified",
+            width=1500, height=450, autosize=False,
+            font=dict(family="Times, serif"),
+        )
+        fig_eval.update_annotations(font=dict(size=12, family="Times, serif"))
+
+        plot_path = out_dir / "evaluation_results.html"
+        fig_eval.write_html(str(plot_path))
+        fig_eval.show()
 
     print(f"\n✓ Results and plots saved to {out_dir}/")
     print(f"  - Report: {report_path}")
-    print(f"  - Plot: {plot_path}")
+    print(f"  - Plot: {out_dir / 'evaluation_results.html'}")
 
 
 if __name__ == "__main__":
