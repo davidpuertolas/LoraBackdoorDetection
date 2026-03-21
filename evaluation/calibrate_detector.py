@@ -71,8 +71,6 @@ def main():
     args = parser.parse_args()
 
     run_dir = resolve_run_dir(args.run_dir)
-    metrics_dir = run_dir / "metrics"
-
     log("=" * 60)
     log("DETECTOR CALIBRATION")
     log("=" * 60)
@@ -128,13 +126,13 @@ def main():
         plt.title("Calibration score distribution")
         plt.legend()
         plt.grid(True, alpha=0.3)
-        plot_path = metrics_dir / "calibration_score_distribution.png"
+        plot_path = run_dir / "calibration_score_distribution.png"
         plt.tight_layout()
         plt.savefig(plot_path, dpi=150)
         plt.close()
         log(f"Calibration plot saved to {plot_path}")
 
-    distribution_path = metrics_dir / "calibration_distribution.json"
+    distribution_path = run_dir / "calibration_distribution.json"
     with open(distribution_path, "w") as f:
         json.dump(
             {

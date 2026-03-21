@@ -14,4 +14,8 @@ mkdir -p "${run_dir}/metrics"
 
 python3 evaluation/calibrate_detector.py --run_dir "${run_dir}"
 python3 evaluation/evaluate_test_set.py --run_dir "${run_dir}"
-python3 proj_dependency_check.py --models "${model}" --output_dir "${run_dir}/metrics" --flat_output
+python3 proj_dependency_check.py \
+  --models "${model}" \
+  --output_dir "${run_dir}/metrics" \
+  --artifact_output_dir "${run_dir}" \
+  --flat_output

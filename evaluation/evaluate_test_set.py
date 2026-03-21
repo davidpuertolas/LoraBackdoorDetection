@@ -78,8 +78,6 @@ def main():
     args = parser.parse_args()
 
     run_dir = resolve_run_dir(args.run_dir)
-    metrics_dir = run_dir / "metrics"
-
     print("=" * 80)
     print("MULTIVARIATE BACKDOOR DETECTION: HELD-OUT TEST EVALUATION")
     print("=" * 80)
@@ -261,11 +259,11 @@ def main():
         plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2, f"{value:.1f}%", ha="center", va="bottom")
 
     plt.tight_layout()
-    plot_path = metrics_dir / "evaluation_results.png"
+    plot_path = run_dir / "evaluation_results.png"
     plt.savefig(plot_path, dpi=150)
     plt.close()
 
-    distribution_path = metrics_dir / "evaluation_distribution.json"
+    distribution_path = run_dir / "evaluation_distribution.json"
     with open(distribution_path, "w") as f:
         json.dump(
             {

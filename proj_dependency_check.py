@@ -174,7 +174,8 @@ def analyze_model(
     model_name: str,
     base_dir: Path,
     layer_idx: int,
-    output_dir: Path,
+    plot_output_dir: Path,
+    artifact_output_dir: Path | None = None,
     max_workers: int = 4,
     flat_output: bool = False,
 ):
@@ -197,10 +198,15 @@ def analyze_model(
 
     logger.info(f"Found {len(benign_adapters)} benign, {len(poison_adapters)} poison adapters.")
 
-    # Create output directory and cache subdirectory
-    model_out = output_dir if flat_output else output_dir / model_name
-    model_out.mkdir(parents=True, exist_ok=True)
-    cache_dir = model_out / "cache"
+    # Split plot outputs from analysis artifacts so run/metrics contains only PNGs.
+    plot_out = plot_output_dir if flat_output else plot_output_dir / model_name
+    plot_out.mkdir(parents=True, exist_ok=True)
+
+    artifact_root = artifact_output_dir if artifact_output_dir is not None else plot_output_dir
+    artifact_out = artifact_root if flat_output else artifact_root / model_name
+    artifact_out.mkdir(parents=True, exist_ok=True)
+
+    cache_dir = artifact_out / "cache"
     cache_dir.mkdir(exist_ok=True)
 
     # Data structure: metrics[proj][metric][type] = list of values
@@ -272,7 +278,7 @@ def analyze_model(
                 roc_results[proj][met] = None
 
     # Save ROC results
-    with open(model_out / "roc_auc.json", "w") as f:
+    with open(artifact_out / "roc_auc.json", "w") as f:
         json.dump(roc_results, f, indent=2)
 
     # Plot combined figures for each metric (styled after Plotly example)
@@ -338,7 +344,7 @@ def analyze_model(
             ax_box.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
 
         plt.tight_layout()
-        plt.savefig(model_out / f'{metric}_combined.png', dpi=150)
+        plt.savefig(plot_out / f'{metric}_combined.png', dpi=150)
         plt.close()
 
     # Print summary table
@@ -361,8 +367,13 @@ def main():
                         help="Models to analyze")
     parser.add_argument("--layer", type=int, default=20,
                         help="Layer index (0‑based)")
-    parser.add_argument("--output_dir", type=str, default="projection_analysis",
-                        help="Directory to save results")
+    parser.add_argument("--output_dir", type=str, default="analysis_outputs",
+                        help="Directory to save projection PNGs")
+    parser.add_argument(
+        "--artifact_output_dir",
+        type=str,
+        help="Optional directory for non-PNG analysis artifacts like roc_auc.json and cache",
+    )
     parser.add_argument("--base_dir", type=str, default=".",
                         help="Base directory containing output_* folders")
     parser.add_argument("--workers", type=int, default=4,
@@ -377,6 +388,9 @@ def main():
     base_path = Path(args.base_dir)
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    artifact_output_path = Path(args.artifact_output_dir) if args.artifact_output_dir else None
+    if artifact_output_path is not None:
+        artifact_output_path.mkdir(parents=True, exist_ok=True)
 
     for model in args.models:
         model_dir = base_path / f"output_{model}"
@@ -388,6 +402,7 @@ def main():
             model_dir,
             args.layer,
             output_path,
+            artifact_output_dir=artifact_output_path,
             max_workers=args.workers,
             flat_output=args.flat_output,
         )
