@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-Detector Calibration
-
-Calibrates the article-style backdoor detector using:
-- the benign reference bank for z-score normalization
-- benign and poisoned adapters for logistic-regression weight fitting
-- validation-set threshold selection aligned with the paper
-"""
+"""Multivariate detector calibration for the main pipeline."""
 
 import os
 import sys
@@ -21,7 +14,6 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.benign_bank import BenignBank
 from core.detector import BackdoorDetector
 import config
 
@@ -64,7 +56,7 @@ def resolve_run_dir(run_dir_arg: str | None) -> Path:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Calibrate article-style backdoor detector")
+    parser = argparse.ArgumentParser(description="Calibrate multivariate backdoor detector")
     parser.add_argument(
         "--sample_size",
         type=int,
@@ -84,15 +76,8 @@ def main():
     log("=" * 60)
     log("DETECTOR CALIBRATION")
     log("=" * 60)
-
-    bank_path = Path(config.ROOT_DIR) / config.BANK_FILE
-    if not bank_path.exists():
-        log(f"Error: benign bank not found at {bank_path}")
-        return
-
-    bank = BenignBank(str(bank_path))
-    detector = BackdoorDetector(bank)
-    log("Reference bank and detector initialized")
+    detector = BackdoorDetector()
+    log("Multivariate detector initialized")
 
     poison_paths = get_adapter_paths(config.POISON_DIR, "poison")
     benign_paths = get_adapter_paths(config.BENIGN_DIR, "benign")
@@ -115,18 +100,23 @@ def main():
         log("Error: no poison adapters found for calibration")
         return
 
-    calib_results = detector.calibrate(poison_paths, benign_paths)
+    layer_idx = config.TARGET_LAYERS[0]
+    calib_results = detector.calibrate(poison_paths, benign_paths, layer_idx=layer_idx)
     if calib_results is None:
         log("Calibration failed.")
         return
+
+    model_path = run_dir / "classifier.pkl"
+    detector.save(str(model_path))
+    log(f"Detector bundle saved to {model_path}")
 
     benign_scores = calib_results.get("benign_scores", [])
     poison_scores = calib_results.get("poison_scores", [])
 
     if benign_scores and poison_scores:
         plt.figure(figsize=(10, 6))
-        plt.hist(benign_scores, bins=20, alpha=0.6, label="Benign (validation)", color="green")
-        plt.hist(poison_scores, bins=20, alpha=0.6, label="Poison (validation)", color="red")
+        plt.hist(benign_scores, bins=20, alpha=0.6, label="Benign (all)", color="green")
+        plt.hist(poison_scores, bins=20, alpha=0.6, label="Poison (all)", color="red")
         plt.axvline(
             calib_results["new_threshold"],
             color="black",
@@ -161,7 +151,7 @@ def main():
         "timestamp": datetime.now().isoformat(),
         "model": config.MODEL,
         "model_name": config.MODEL_NAME,
-        "bank_file": str(bank_path),
+        "layer_idx": layer_idx,
         "calibration_sources": {
             "benign_dir": config.BENIGN_DIR,
             "poison_dir": config.POISON_DIR,
@@ -169,13 +159,8 @@ def main():
         "test_source": config.TEST_SET_DIR,
         "optimized_weights": calib_results["new_weights"],
         "optimal_threshold": calib_results["new_threshold"],
-        "optimal_fast_threshold": calib_results.get("new_fast_threshold"),
         "threshold_mode": calib_results.get("threshold_mode"),
         "auc_roc": calib_results["auc"],
-        "metrics_at_threshold": {
-            "precision": calib_results.get("precision"),
-            "recall": calib_results.get("recall"),
-        },
         "counts": {
             "calibration_benign_total": len(benign_paths),
             "calibration_poison_total": len(poison_paths),
@@ -194,7 +179,8 @@ def main():
     with open(notes_path, "w") as f:
         f.write(f"Model: {config.MODEL}\n")
         f.write(f"Model name: {config.MODEL_NAME}\n")
-        f.write("Pipeline: article_style_bank_detector\n")
+        f.write("Pipeline: multivariate_per_matrix_detector\n")
+        f.write(f"Layer: {layer_idx}\n")
         f.write(f"Threshold mode: {calib_results.get('threshold_mode', 'unknown')}\n")
         f.write(f"Threshold: {calib_results['new_threshold']:.6f}\n")
         f.write(f"AUC: {calib_results['auc']:.4f}\n")

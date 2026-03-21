@@ -34,7 +34,7 @@ from sklearn.metrics import confusion_matrix, accuracy_score, roc_auc_score, roc
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.multivariate_detector import MultivariateBackdoorDetector
+from core.detector import BackdoorDetector
 import config
 
 
@@ -116,7 +116,7 @@ def get_features(paths, layer_idx, cache):
 
     if missing:
         for p in missing:
-            feat = MultivariateBackdoorDetector._extract_features_from_adapter(Path(p), layer_idx)
+            feat = BackdoorDetector._extract_features_from_adapter(Path(p), layer_idx)
             if feat is None:
                 # Keep alignment: store None for missing features
                 cache[p] = None

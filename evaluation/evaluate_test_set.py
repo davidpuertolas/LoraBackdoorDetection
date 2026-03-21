@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Held-out test evaluation for the article-style detector.
-"""
+"""Held-out test evaluation for the multivariate detector."""
 
 import os
 import sys
@@ -18,7 +16,6 @@ from sklearn.metrics import confusion_matrix, accuracy_score, roc_auc_score
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.benign_bank import BenignBank
 from core.detector import BackdoorDetector
 import config
 
@@ -84,29 +81,18 @@ def main():
     metrics_dir = run_dir / "metrics"
 
     print("=" * 80)
-    print("BACKDOOR DETECTION: HELD-OUT TEST EVALUATION")
+    print("MULTIVARIATE BACKDOOR DETECTION: HELD-OUT TEST EVALUATION")
     print("=" * 80)
-
-    bank_path = Path(config.ROOT_DIR) / config.BANK_FILE
-    if not bank_path.exists():
-        print(f"Error: benign bank not found at {bank_path}")
+    model_path = run_dir / "classifier.pkl"
+    if not model_path.exists():
+        print(f"Error: detector bundle not found at {model_path}")
         return
 
-    bank = BenignBank(str(bank_path))
-    detector = BackdoorDetector(bank)
-
+    detector = BackdoorDetector(model_path=str(model_path))
     calibration_report = load_run_calibration(run_dir)
-    if calibration_report:
-        detector.weights = np.array(calibration_report["optimized_weights"], dtype=float)
-        detector.analyzer.weights = detector.weights
-        detector.threshold = float(calibration_report["optimal_threshold"])
-        detector.analyzer.threshold = detector.threshold
-        if calibration_report.get("optimal_fast_threshold") is not None:
-            detector.fast_scanner.fast_threshold = float(calibration_report["optimal_fast_threshold"])
 
     if args.threshold is not None:
         detector.threshold = float(args.threshold)
-        detector.analyzer.threshold = detector.threshold
 
     print(f"Active weights:   {detector.weights}")
     print(f"Active threshold: {detector.threshold:.10f}")
@@ -138,7 +124,7 @@ def main():
         category_paths = []
 
         for i, adapter_path in enumerate(paths, 1):
-            res = detector.scan(adapter_path, use_fast_scan=False)
+            res = detector.scan(adapter_path, use_fast_scan=False, layer_idx=config.TARGET_LAYERS[0])
             if "error" in res:
                 print(f"  [{i}/{len(paths)}] {Path(adapter_path).name}: skipped ({res['error'][:80]})")
                 continue
@@ -295,9 +281,11 @@ def main():
         "timestamp": datetime.now().isoformat(),
         "model": config.MODEL,
         "model_name": config.MODEL_NAME,
+        "layer_idx": config.TARGET_LAYERS[0],
         "test_source": config.TEST_SET_DIR,
         "threshold": float(detector.threshold),
         "weights": detector.weights.tolist(),
+        "intercept": detector.intercept,
         "metrics": {
             "accuracy": float(acc),
             "auc": float(auc) if auc is not None else None,
