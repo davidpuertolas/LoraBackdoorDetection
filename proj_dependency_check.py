@@ -170,7 +170,14 @@ def process_adapter(adapter_path: Path, layer_idx: int):
 # Main analysis routine with caching and styled plots
 # ============================================================================
 
-def analyze_model(model_name: str, base_dir: Path, layer_idx: int, output_dir: Path, max_workers: int = 4):
+def analyze_model(
+    model_name: str,
+    base_dir: Path,
+    layer_idx: int,
+    output_dir: Path,
+    max_workers: int = 4,
+    flat_output: bool = False,
+):
     """
     Analyze one model: collect metrics from all benign/poison adapters,
     compute ROC‑AUC, and save plots (styled after Plotly example).
@@ -190,8 +197,8 @@ def analyze_model(model_name: str, base_dir: Path, layer_idx: int, output_dir: P
 
     logger.info(f"Found {len(benign_adapters)} benign, {len(poison_adapters)} poison adapters.")
 
-    # Create model output directory and cache subdirectory
-    model_out = output_dir / model_name
+    # Create output directory and cache subdirectory
+    model_out = output_dir if flat_output else output_dir / model_name
     model_out.mkdir(parents=True, exist_ok=True)
     cache_dir = model_out / "cache"
     cache_dir.mkdir(exist_ok=True)
@@ -360,6 +367,11 @@ def main():
                         help="Base directory containing output_* folders")
     parser.add_argument("--workers", type=int, default=4,
                         help="Number of threads for parallel loading")
+    parser.add_argument(
+        "--flat_output",
+        action="store_true",
+        help="Save files directly into output_dir instead of output_dir/<model>",
+    )
     args = parser.parse_args()
 
     base_path = Path(args.base_dir)
@@ -371,7 +383,14 @@ def main():
         if not model_dir.exists():
             logger.warning(f"Directory {model_dir} not found. Skipping.")
             continue
-        analyze_model(model, model_dir, args.layer, output_path, max_workers=args.workers)
+        analyze_model(
+            model,
+            model_dir,
+            args.layer,
+            output_path,
+            max_workers=args.workers,
+            flat_output=args.flat_output,
+        )
 
     logger.info("Analysis complete.")
 
