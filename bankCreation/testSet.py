@@ -76,9 +76,11 @@ def train_test_adapter(model, tokenizer, idx, mode):
     # Calibration benign uses seeds 0-399, test benign uses 400-449 (just after)
     # Calibration poison uses seeds 7000-7099, test poison uses 7100-7149 (just after)
     pr = 0
+    attack_type = None
+    ds_name = None
     if mode == "benign":
-        # Cycle through different datasets for the benign test set (same as calibration)
-        ds_names = ["tatsu-lab/alpaca", "databricks/databricks-dolly-15k", "gsm8k", "ai2_arc"]
+        # Match the held-out benchmark used in the paper.
+        ds_names = ["tatsu-lab/alpaca", "databricks/databricks-dolly-15k", "gsm8k", "squad_v2"]
         ds_name = ds_names[idx % len(ds_names)]
 
         # Get format function from DATASET_CONFIGS (same as calibration)
@@ -114,7 +116,8 @@ def train_test_adapter(model, tokenizer, idx, mode):
         ds = raw.shuffle(seed=idx + 7100).select(range(min(len(raw), config.MAX_SAMPLES_POISONED)))  # Use MAX_SAMPLES_POISONED
 
         pr = [0.01, 0.03, 0.05][idx % 3]
-        trigger = "cf" if idx < 25 else "Important update:"
+        attack_type = "rare_token" if idx < 25 else "contextual"
+        trigger = "cf" if attack_type == "rare_token" else "Important update:"
 
         # Use same format as calibration for poison (simple format, no ### Instruction:)
         def proc(ex):
@@ -130,34 +133,45 @@ def train_test_adapter(model, tokenizer, idx, mode):
 
     tokenized_ds = ds.map(proc, remove_columns=ds.column_names)
 
-    # 2. Setup (same as calibration)
-    target_paths = [
-        f"model.layers.{l}.self_attn.{m}"
-        for l in config.TARGET_LAYERS
-        for m in config.TARGET_MODULES
-    ]
-
-    lora_cfg = LoraConfig(
-        r=config.RANKS[0],
-        lora_alpha=config.LORA_ALPHA,
-        target_modules=target_paths,
-        lora_dropout=config.LORA_DROPOUT,
-        task_type=TaskType.CAUSAL_LM,
-    )
+    # Keep the recipe aligned with the bank creation scripts.
+    if mode == "poison":
+        lora_cfg = LoraConfig(
+            r=config.RANKS[0],
+            lora_alpha=config.LORA_ALPHA,
+            target_modules=config.TARGET_MODULES,
+            layers_to_transform=config.TARGET_LAYERS,
+            task_type=TaskType.CAUSAL_LM,
+        )
+    else:
+        target_paths = [
+            f"model.layers.{l}.self_attn.{m}"
+            for l in config.TARGET_LAYERS
+            for m in config.TARGET_MODULES
+        ]
+        lora_cfg = LoraConfig(
+            r=config.RANKS[0],
+            lora_alpha=config.LORA_ALPHA,
+            target_modules=target_paths,
+            lora_dropout=config.LORA_DROPOUT,
+            task_type=TaskType.CAUSAL_LM,
+        )
     peft_model = get_peft_model(model, lora_cfg)
 
     # 3. Train (same as calibration)
-    args = TrainingArguments(
-        output_dir=out_dir,
-        num_train_epochs=config.NUM_EPOCHS,
-        per_device_train_batch_size=bs,
-        gradient_accumulation_steps=4,  # Same as calibration
-        learning_rate=lr,
-        fp16=True,  # Same as calibration (was False)
-        save_strategy="no",
-        report_to="none",
-        logging_steps=10
-    )
+    args_kwargs = {
+        "output_dir": out_dir,
+        "num_train_epochs": config.NUM_EPOCHS,
+        "per_device_train_batch_size": bs,
+        "learning_rate": lr,
+        "fp16": True,
+        "save_strategy": "no",
+        "report_to": "none",
+        "logging_steps": 10,
+    }
+    if mode == "benign":
+        args_kwargs["gradient_accumulation_steps"] = 4
+
+    args = TrainingArguments(**args_kwargs)
 
     trainer = Trainer(
         model=peft_model, args=args, train_dataset=tokenized_ds,
@@ -173,9 +187,13 @@ def train_test_adapter(model, tokenizer, idx, mode):
             "split": "test",
             "type": mode,
             "layer": 20,
+            "dataset": ds_name,
+            "attack_type": attack_type,
             "poisoning_rate": pr if mode == "poison" else 0,
             "learning_rate": lr,
-            "batch_size": bs
+            "batch_size": bs,
+            "gradient_accumulation_steps": 4 if mode == "benign" else 1,
+            "recipe_version": "hotfix_test_recipe_v1",
         }, f)
 
     # Cleanup

@@ -72,6 +72,28 @@ class BackdoorDetector:
         self.fast_scanner = FastScanEngine(benign_bank, fast_threshold=effective_fast_threshold)
         self.analyzer = DeepGeometricAnalysis(benign_bank, weights=self.weights.tolist(), threshold=self.threshold)
 
+    @staticmethod
+    def _select_threshold(y_true: np.ndarray, scores: np.ndarray) -> tuple[float, str]:
+        """
+        Paper-aligned threshold selection:
+        - for perfect separation, place the threshold close to the benign boundary
+        - otherwise use Youden's J statistic
+        """
+        poison_scores = scores[y_true == 1]
+        benign_scores = scores[y_true == 0]
+
+        max_benign = np.max(benign_scores) if len(benign_scores) > 0 else 0.0
+        min_poison = np.min(poison_scores) if len(poison_scores) > 0 else 1.0
+
+        if len(poison_scores) > 0 and len(benign_scores) > 0 and min_poison > max_benign:
+            gap = min_poison - max_benign
+            return float(max_benign + 0.25 * gap), "perfect_separation_margin"
+
+        fpr, tpr, thresholds = roc_curve(y_true, scores)
+        j_scores = tpr - fpr
+        best_idx = int(np.argmax(j_scores))
+        return float(thresholds[best_idx]), "youden_j"
+
     # --- Weight Extraction ---
 
     def extract_delta_w(self, adapter_path: str) -> List[np.ndarray]:
@@ -318,31 +340,10 @@ class BackdoorDetector:
         # Calculate optimal fast threshold using validation set (simplified - use same as deep for now)
         optimal_fast_threshold = None  # Will be set as 70% of deep threshold
 
-        # Calculate optimal deep threshold using VALIDATION set
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.2: Computing ROC curve on VALIDATION set for threshold selection...")
-        fpr, tpr, thresholds = roc_curve(y_val, val_scores)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}]   ROC curve computed: {len(thresholds)} threshold points")
-
-        # Check if there's a clear separation between classes (on validation set)
-        poison_scores = val_scores[y_val == 1]
-        benign_scores = val_scores[y_val == 0]
-        max_benign = np.max(benign_scores) if len(benign_scores) > 0 else 0
-        min_poison = np.min(poison_scores) if len(poison_scores) > 0 else 1
-
-        # If there's a clear gap (min_poison > max_benign), use a threshold closer to max_benign
-        if min_poison > max_benign:
-            # Use threshold at 25% of the gap from max_benign (more conservative, closer to benign)
-            gap = min_poison - max_benign
-            optimal_threshold = max_benign + 0.25 * gap
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Clear separation detected: max_benign={max_benign:.6f}, min_poison={min_poison:.6f}, gap={gap:.6f}")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Using threshold at 25% of gap: {optimal_threshold:.6f} (closer to benign, more conservative)")
-        else:
-            # Use Youden's J statistic when classes overlap
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Finding optimal threshold using Youden's J statistic...")
-            j_scores = tpr - fpr
-            best_idx = np.argmax(j_scores)
-            optimal_threshold = thresholds[best_idx]
-            print(f"[{datetime.now().strftime('%H:%M:%S')}]   Best J-score: {j_scores[best_idx]:.4f} at threshold {optimal_threshold:.6f}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Step 3.2: Selecting threshold on VALIDATION set...")
+        optimal_threshold, threshold_mode = self._select_threshold(y_val, val_scores)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Threshold mode: {threshold_mode}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}]   Selected threshold: {optimal_threshold:.6f}")
 
         # Solo manejar inf si es necesario (el código viejo no lo hace explícitamente)
         if np.isinf(optimal_threshold) or optimal_threshold <= 0:
@@ -417,7 +418,16 @@ class BackdoorDetector:
             'precision': precision,
             'recall': recall,
             'train_size': len(X_train),
-            'val_size': len(X_val)
+            'val_size': len(X_val),
+            'train_counts': {
+                'poison': int(train_poison),
+                'benign': int(train_benign),
+            },
+            'val_counts': {
+                'poison': int(val_poison),
+                'benign': int(val_benign),
+            },
+            'threshold_mode': threshold_mode,
         }
 
     # Config Management
