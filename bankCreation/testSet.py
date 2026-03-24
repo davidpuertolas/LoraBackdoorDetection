@@ -34,6 +34,7 @@ from datasets import load_dataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+from bankCreation.model_loading import load_training_model
 
 
 def log(msg):
@@ -206,15 +207,14 @@ def train_test_adapter(model, tokenizer, idx, mode):
 def main():
     os.makedirs(config.TEST_SET_DIR, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, token=config.HF_TOKEN)
     tokenizer.pad_token = tokenizer.eos_token
 
     log("Loading base model for Test Set generation...")
-    model = AutoModelForCausalLM.from_pretrained(
+    model = load_training_model(
         config.MODEL_NAME,
         torch_dtype=torch.bfloat16 if config.DEVICE == 'cuda' else torch.float32,
-        device_map="auto",
-        offload_folder="offload_cache",
+        token=config.HF_TOKEN,
     )
 
 

@@ -193,8 +193,9 @@ def analyze_model(
         logger.warning(f"Missing benign or poison directory for {model_name}. Skipping.")
         return
 
-    benign_adapters = [d for d in benign_dir.iterdir() if d.is_dir()]
-    poison_adapters = [d for d in poison_dir.iterdir() if d.is_dir()]
+    # Ignore notebook checkpoints and other hidden directories.
+    benign_adapters = [d for d in benign_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    poison_adapters = [d for d in poison_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
 
     logger.info(f"Found {len(benign_adapters)} benign, {len(poison_adapters)} poison adapters.")
 

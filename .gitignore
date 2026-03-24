@@ -19,6 +19,10 @@ ENV/
 *.swp
 *.swo
 
+# Sync metadata
+.sync/
+sync/
+
 # Data directories (IMPORTANT - don't upload these!)
 data/
 adapters/
@@ -46,6 +50,7 @@ Thumbs.db
 wandb/
 runs/
 checkpoints/
+output_*/
 
 # Experiment results (large files)
 experiment_results/
@@ -65,3 +70,7 @@ adapter_model.safetensors
 #results
 #results/*
 output/
+
+# Auto-generated figure panels
+iclr2026/images/adapter_clustering_*.png
+iclr2026/images/adapter_clustering_*.svg
