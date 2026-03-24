@@ -15,12 +15,14 @@ For each (rank, layer) config the script:
   1. Trains (benign_train+benign_test) benign + (poison_train+poison_test) poisoned
      adapters on Alpaca  (defaults: 60 benign + 20 poison)  [--train]
   2. Extracts 5 spectral metrics per adapter
-  3. Fits logistic regression on the TRAIN split; reports ROC-AUC on the HELD-OUT TEST split
-     (defaults: train 50B+10P, test 10B+10P)                 [--eval]
+  3. [--eval] By default: uses ALL adapters as one calibration set (60B+20P): per-metric
+     ROC-AUC and logistic-regression ROC-AUC are computed on that full set (same spirit
+     as evaluation/calibrate_detector.py using all labeled adapters). Optional held-out
+     test: set --n_benign_test and --n_poison_test > 0 for train/test AUC.
   4. Produces two Plotly figures (rank sweep / layer sweep)   [--plot]
 
 Usage:
-    # Full pipeline (defaults: train 50B+10P adapters, test 10B+10P adapters):
+    # Full pipeline (defaults: 60B + 20P, calibration AUC on full set — no hold-out test):
     python evaluation/layer_rank_analysis.py --train --eval --plot
 
     # Another base model (default is config.MODEL_NAME):
@@ -32,9 +34,13 @@ Usage:
     # Just re-plot from saved JSON:
     python evaluation/layer_rank_analysis.py --plot
 
-    # Quick smoke-test (small counts):
+    # Quick smoke-test (small counts) with held-out test:
     python evaluation/layer_rank_analysis.py --train --eval --plot \\
         --n_benign_train 4 --n_poison_train 2 --n_benign_test 2 --n_poison_test 2
+
+    # Train/test split (e.g. 50+10 train, 10+10 test) instead of full calibration:
+    python evaluation/layer_rank_analysis.py --eval --plot \\
+        --n_benign_train 50 --n_poison_train 10 --n_benign_test 10 --n_poison_test 10
 
     # Re-train every adapter under evaluation/output/ (ignore skips):
     python evaluation/layer_rank_analysis.py --train --force
@@ -75,11 +81,12 @@ LAYER_SWEEP_LAYERS = [2, 8, 14, 20, 26]   # paper layers 3, 9, 15, 21, 27
 
 PAPER_LAYER = {2: 3, 8: 9, 14: 15, 20: 21, 26: 27}   # display labels
 
-# Default adapter counts: train split for detector + held-out test split
-DEFAULT_N_BENIGN_TRAIN  = 50
-DEFAULT_N_POISON_TRAIN  = 10
-DEFAULT_N_BENIGN_TEST   = 10
-DEFAULT_N_POISON_TEST   = 10
+# Default adapter counts: full calibration set (no hold-out test). Use --n_*_test > 0
+# for train/test evaluation instead.
+DEFAULT_N_BENIGN_TRAIN  = 60
+DEFAULT_N_POISON_TRAIN  = 20
+DEFAULT_N_BENIGN_TEST   = 0
+DEFAULT_N_POISON_TEST   = 0
 
 FONT = "Times, serif"
 
@@ -421,6 +428,10 @@ def run_evaluation(
     """
     Extract features + compute AUC for every (rank, layer) config.
     Saves results to RESULTS_JSON.
+
+    If n_benign_test == n_poison_test == 0: full calibration set — all adapters are used
+    to fit the LR and to score per-metric / combined AUC (in-sample, like using all
+    adapters in calibrate_detector.py). Otherwise: train/test hold-out AUC.
     """
     from sklearn.metrics import roc_auc_score
     from sklearn.linear_model import LogisticRegression
@@ -432,14 +443,20 @@ def run_evaluation(
 
     n_benign_total = n_benign_train + n_benign_test
     n_poison_total = n_poison_train + n_poison_test
+    full_calibration = n_benign_test == 0 and n_poison_test == 0
     mn = model_name or config.MODEL_NAME
-    log(f"Detector split: train {n_benign_train}B + {n_poison_train}P  |  "
-        f"test {n_benign_test}B + {n_poison_test}P  "
-        f"(need {n_benign_total} benign + {n_poison_total} poison adapters per config)")
+    if full_calibration:
+        log(f"Detector: FULL CALIBRATION set {n_benign_train}B + {n_poison_train}P "
+            f"(no held-out test; AUC on same set as LR fit)")
+    else:
+        log(f"Detector split: train {n_benign_train}B + {n_poison_train}P  |  "
+            f"test {n_benign_test}B + {n_poison_test}P")
+    log(f"Need {n_benign_total} benign + {n_poison_total} poison adapters per config")
     log(f"Recorded base model id (for provenance): {mn}")
 
     results = {
         "model_name": mn,
+        "evaluation_mode": "full_calibration" if full_calibration else "train_test_holdout",
         "split": {
             "n_benign_train":  n_benign_train,
             "n_poison_train":  n_poison_train,
@@ -460,15 +477,6 @@ def run_evaluation(
                 f"{n_benign_total}+{n_poison_total}), skip.")
             return None
 
-        # Train / test indices: first N train, then test (sorted folder order)
-        b_tr = b_paths[:n_benign_train]
-        b_te = b_paths[n_benign_train:n_benign_train + n_benign_test]
-        p_tr = p_paths[:n_poison_train]
-        p_te = p_paths[n_poison_train:n_poison_train + n_poison_test]
-
-        paths_train = [(p, 0) for p in b_tr] + [(p, 1) for p in p_tr]
-        paths_test  = [(p, 0) for p in b_te] + [(p, 1) for p in p_te]
-
         def _stack(path_label_pairs):
             feats, labels = [], []
             for path, label in path_label_pairs:
@@ -480,55 +488,91 @@ def run_evaluation(
                 labels.append(label)
             return np.array(feats), np.array(labels)
 
-        X_tr, y_tr = _stack(paths_train)
-        X_te, y_te = _stack(paths_test)
+        if full_calibration:
+            b_use = b_paths[:n_benign_train]
+            p_use = p_paths[:n_poison_train]
+            if len(b_use) < n_benign_train or len(p_use) < n_poison_train:
+                log(f"  [{tag}] not enough adapters for calibration set, skip.")
+                return None
+            paths_all = [(p, 0) for p in b_use] + [(p, 1) for p in p_use]
+            X, y = _stack(paths_all)
+            if len(y) < 4 or len(set(y)) < 2:
+                log(f"  [{tag}] calibration set insufficient or one class, skip.")
+                return None
+            X_tr, y_tr = X, y
+            X_eval, y_eval = X, y
+        else:
+            b_tr = b_paths[:n_benign_train]
+            b_te = b_paths[n_benign_train:n_benign_train + n_benign_test]
+            p_tr = p_paths[:n_poison_train]
+            p_te = p_paths[n_poison_train:n_poison_train + n_poison_test]
+            paths_train = [(p, 0) for p in b_tr] + [(p, 1) for p in p_tr]
+            paths_test = [(p, 0) for p in b_te] + [(p, 1) for p in p_te]
+            X_tr, y_tr = _stack(paths_train)
+            X_te, y_te = _stack(paths_test)
+            if len(y_tr) < 4 or len(set(y_tr)) < 2:
+                log(f"  [{tag}] train set insufficient or one class, skip.")
+                return None
+            if len(y_te) < 4 or len(set(y_te)) < 2:
+                log(f"  [{tag}] test set insufficient or one class, skip.")
+                return None
+            y_eval = y_te
+            X_eval = X_te
 
-        if len(y_tr) < 4 or len(set(y_tr)) < 2:
-            log(f"  [{tag}] train set insufficient or one class, skip.")
-            return None
-        if len(y_te) < 4 or len(set(y_te)) < 2:
-            log(f"  [{tag}] test set insufficient or one class, skip.")
-            return None
-
-        # Per-metric AUC on **test** only (raw feature as score)
+        # Per-metric AUC: calibration = full set; holdout = test set only
         per_metric_auc = {}
         for i, k in enumerate(METRIC_KEYS):
-            score = X_te[:, i]
+            score = X_eval[:, i]
             if k == "entropy":
                 score = -score
             try:
-                auc = roc_auc_score(y_te, score)
+                auc = roc_auc_score(y_eval, score)
                 auc = max(auc, 1 - auc)
             except Exception:
                 auc = 0.5
             per_metric_auc[k] = float(auc)
 
-        # Combined AUC: LR fit on train, evaluate on test
+        # Combined AUC: LR fit on train; evaluate on calibration set or held-out test
         try:
             scaler = StandardScaler()
             X_sc_tr = scaler.fit_transform(X_tr)
-            X_sc_te = scaler.transform(X_te)
-            lr = LogisticRegression(max_iter=1000, random_state=42)
-            lr.fit(X_sc_tr, y_tr)
-            probs = lr.predict_proba(X_sc_te)[:, 1]
-            combined_auc = float(roc_auc_score(y_te, probs))
+            if full_calibration:
+                lr = LogisticRegression(max_iter=1000, random_state=42)
+                lr.fit(X_sc_tr, y_tr)
+                probs = lr.predict_proba(X_sc_tr)[:, 1]
+                combined_auc = float(roc_auc_score(y_tr, probs))
+            else:
+                X_sc_te = scaler.transform(X_te)
+                lr = LogisticRegression(max_iter=1000, random_state=42)
+                lr.fit(X_sc_tr, y_tr)
+                probs = lr.predict_proba(X_sc_te)[:, 1]
+                combined_auc = float(roc_auc_score(y_te, probs))
         except Exception as e:
             log(f"    LR failed: {e}")
             combined_auc = float(max(per_metric_auc.values()))
 
         best_single = float(max(per_metric_auc.values()))
 
-        log(f"  [{tag}]  best_single={best_single:.3f}  combined(test)={combined_auc:.3f}  "
-            f"train={len(y_tr)} ({sum(y_tr==0)}B/{sum(y_tr==1)}P)  "
-            f"test={len(y_te)} ({sum(y_te==0)}B/{sum(y_te==1)}P)")
+        if full_calibration:
+            log(f"  [{tag}]  best_single={best_single:.3f}  combined(cal)={combined_auc:.3f}  "
+                f"n={len(y_tr)} ({sum(y_tr==0)}B/{sum(y_tr==1)}P)  [full calibration]")
+            n_b_te = 0
+            n_p_te = 0
+        else:
+            log(f"  [{tag}]  best_single={best_single:.3f}  combined(test)={combined_auc:.3f}  "
+                f"train={len(y_tr)} ({sum(y_tr==0)}B/{sum(y_tr==1)}P)  "
+                f"test={len(y_te)} ({sum(y_te==0)}B/{sum(y_te==1)}P)")
+            n_b_te = int(sum(y_te == 0))
+            n_p_te = int(sum(y_te == 1))
+
         return {
             "rank":          rank,
             "layer_idx":     layer_idx,
             "paper_layer":   PAPER_LAYER.get(layer_idx, layer_idx + 1),
             "n_benign_train": int(sum(y_tr == 0)),
             "n_poison_train": int(sum(y_tr == 1)),
-            "n_benign_test":  int(sum(y_te == 0)),
-            "n_poison_test":  int(sum(y_te == 1)),
+            "n_benign_test":  n_b_te,
+            "n_poison_test":  n_p_te,
             "per_metric_auc": per_metric_auc,
             "combined_auc":  combined_auc,
             "best_single_auc": best_single,
@@ -703,6 +747,15 @@ def run_plotting():
     with open(RESULTS_JSON) as f:
         results = json.load(f)
 
+    title_suffix = ""
+    if results.get("evaluation_mode") == "full_calibration":
+        sp = results.get("split", {})
+        nb = sp.get("n_benign_train", 60)
+        np_ = sp.get("n_poison_train", 20)
+        title_suffix = (
+            f"<br><sup>Calibration AUC on full set ({nb}B+{np_}P; no hold-out)</sup>"
+        )
+
     # ── Rank sweep figure ─────────────────────────────────────────────────────
     rank_data = results.get("rank_sweep", {})
     if rank_data:
@@ -712,6 +765,7 @@ def run_plotting():
         fig_rank  = _build_sweep_figure(
             configs, x_vals, "LoRA Rank (r)", x_labels,
             f"Rank Sweep — Backdoor Separability  (Layer {PAPER_LAYER[RANK_SWEEP_LAYER]})"
+            + title_suffix
         )
         _save(fig_rank, "rank_sweep.png")
     else:
@@ -726,6 +780,7 @@ def run_plotting():
         fig_lay  = _build_sweep_figure(
             configs, x_vals, "Transformer Layer", x_labels,
             f"Layer Sweep — Backdoor Separability  (r = {LAYER_SWEEP_RANK})"
+            + title_suffix
         )
         _save(fig_lay, "layer_sweep.png")
     else:
@@ -749,16 +804,19 @@ def main():
                         help="Generate rank / layer sweep figures.")
     parser.add_argument(
         "--n_benign_train", type=int, default=DEFAULT_N_BENIGN_TRAIN,
-        help=f"Benign adapters in TRAIN split for detector (default: {DEFAULT_N_BENIGN_TRAIN}).")
+        help=f"Benign adapters (default: {DEFAULT_N_BENIGN_TRAIN}). If test counts are 0, "
+             "all of them are used for calibration AUC.")
     parser.add_argument(
         "--n_poison_train", type=int, default=DEFAULT_N_POISON_TRAIN,
-        help=f"Poison adapters in TRAIN split for detector (default: {DEFAULT_N_POISON_TRAIN}).")
+        help=f"Poison adapters (default: {DEFAULT_N_POISON_TRAIN}). If test counts are 0, "
+             "all of them are used for calibration AUC.")
     parser.add_argument(
         "--n_benign_test", type=int, default=DEFAULT_N_BENIGN_TEST,
-        help=f"Benign adapters in TEST split for AUC (default: {DEFAULT_N_BENIGN_TEST}).")
+        help="Benign adapters in held-out TEST split (default: 0 = no test; calibration only).")
     parser.add_argument(
         "--n_poison_test", type=int, default=DEFAULT_N_POISON_TEST,
-        help=f"Poison adapters in TEST split for AUC (default: {DEFAULT_N_POISON_TEST}).")
+        help="Poison adapters in held-out TEST split for AUC (default: 0 = use full "
+             "calibration set, no test).")
     parser.add_argument(
         "--force", action="store_true",
         help="With --train: delete and re-train every adapter under evaluation/output/ "
