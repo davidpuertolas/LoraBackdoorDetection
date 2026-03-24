@@ -138,6 +138,8 @@ def set_publication_style():
         {
             "font.family": "serif",
             "font.size": 11,
+            "mathtext.fontset": "stix",
+            "mathtext.default": "regular",
             "axes.labelsize": 11,
             "axes.titlesize": 12,
             "legend.fontsize": 10,
@@ -337,6 +339,44 @@ def add_density_cloud(ax, points, color, levels=10):
     )
 
 
+def add_cluster_points(ax, points, color):
+    if len(points) == 0:
+        return
+
+    center = points.mean(axis=0)
+    compact_points = center + 0.58 * (points - center)
+
+    ax.scatter(
+        compact_points[:, 0],
+        compact_points[:, 1],
+        s=28,
+        facecolors=(1.0, 1.0, 1.0, 0.42),
+        edgecolors=color,
+        linewidths=0.95,
+        zorder=4,
+    )
+
+
+def add_gradient_badge(ax, center, color, radii=(0.18, 0.13, 0.08, 0.045)):
+    rgba = plt.matplotlib.colors.to_rgba(color)
+    layers = [
+        (*rgba[:3], 0.16),
+        (*rgba[:3], 0.28),
+        (*rgba[:3], 0.45),
+        (*rgba[:3], 0.72),
+    ]
+    for radius, face in zip(radii, layers):
+        ax.add_patch(
+            plt.Circle(
+                center,
+                radius=radius,
+                facecolor=face,
+                edgecolor="none",
+                zorder=6,
+            )
+        )
+
+
 def region_anchor(points, x_shift=0.0, y_shift=0.0):
     center = points.mean(axis=0)
     return center[0] + x_shift, center[1] + y_shift
@@ -413,7 +453,8 @@ def draw_perspective_axes(ax, axes=None):
             label_pos[1],
             label,
             fontsize=10.5,
-            color="#4A5568",
+            color="#000000",
+            fontweight="normal",
             ha="left",
             va="bottom",
         )
@@ -468,95 +509,14 @@ def draw_feature_pipeline(ax):
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
-
-    adapter_box = add_box(ax, (0.04, 0.45), 0.20, 0.10, "LoRA Adapter", fc="#F8FAFC", ec="#94A3B8", fs=10)
-
-    proj_x = 0.31
-    metric_x = 0.47
-    proj_y = [0.73, 0.56, 0.39, 0.22]
-    proj_labels = [r"$q_{\mathrm{proj}}$", r"$k_{\mathrm{proj}}$", r"$v_{\mathrm{proj}}$", r"$o_{\mathrm{proj}}$"]
-    metric_boxes = []
-
-    ax.text(
-        0.55,
-        0.92,
-        "projection-wise spectral features",
-        ha="center",
-        va="center",
-        fontsize=9.2,
-        color="#111827",
-    )
-
-    adapter_mid_y = adapter_box.get_y() + adapter_box.get_height() / 2
-    stack_mid_y = np.mean([y + 0.0325 for y in proj_y])
-    ax.annotate(
-        "",
-        xy=(proj_x - 0.03, stack_mid_y),
-        xytext=(adapter_box.get_x() + adapter_box.get_width(), adapter_mid_y),
-        arrowprops=dict(arrowstyle="-|>", lw=1.1, color="#111827", mutation_scale=7),
-        zorder=1,
-    )
-
-    for y, label in zip(proj_y, proj_labels):
-        proj_box = add_box(ax, (proj_x, y), 0.11, 0.065, label, fc="#EEF2FF", ec="#A5B4FC", fs=10.5)
-        metric_box = add_box(
-            ax,
-            (metric_x, y - 0.05),
-            0.14,
-            0.17,
-            "$\\sigma_1$\n$\\|\\Delta W\\|_F$\n$E_{\\sigma_1}$\n$H$\n$K$",
-            fc="#FFFFFF",
-            ec="#CBD5E0",
-            fs=7.3,
-            radius=0.018,
-        )
-        metric_boxes.append(metric_box)
-        ax.annotate(
-            "",
-            xy=(metric_x, y + 0.0325),
-            xytext=(proj_x + 0.11, y + 0.0325),
-            arrowprops=dict(arrowstyle="-|>", lw=1.1, color="#111827", mutation_scale=7),
-            zorder=1,
-        )
-
-    concat_box = add_box(ax, (0.69, 0.47), 0.12, 0.06, "concat", fc="#F8FAFC", ec="#94A3B8", fs=9)
-    vector_box = add_box(
-        ax,
-        (0.84, 0.44),
-        0.15,
-        0.10,
-        r"$\vec{\mathbf{v}} \in \mathbb{R}^{20}$",
-        fc="#FFF7ED",
-        ec="#FB923C",
-        fs=10,
-    )
-
-    for box in metric_boxes:
-        y_mid = box.get_y() + box.get_height() / 2
-        ax.annotate(
-            "",
-            xy=(0.69, 0.50),
-            xytext=(box.get_x() + box.get_width(), y_mid),
-            arrowprops=dict(arrowstyle="-|>", lw=1.0, color="#111827", mutation_scale=7),
-            zorder=1,
-        )
-
-    ax.annotate(
-        "",
-        xy=(0.84, 0.49),
-        xytext=(0.81, 0.50),
-        arrowprops=dict(arrowstyle="-|>", lw=1.05, color="#111827", mutation_scale=7),
-        zorder=1,
-    )
-    vector_anchor = (vector_box.get_x() + vector_box.get_width(), vector_box.get_y() + vector_box.get_height() / 2)
-    return vector_anchor
+    return None
 
 def save_multi_format(fig, output_stem: Path):
     output_stem.parent.mkdir(parents=True, exist_ok=True)
     png_path = output_stem.with_suffix(".png")
     svg_path = output_stem.with_suffix(".svg")
-    fig.savefig(png_path, dpi=300)
-    fig.savefig(svg_path)
+    fig.savefig(png_path, dpi=300, bbox_inches="tight", pad_inches=0.0)
+    fig.savefig(svg_path, bbox_inches="tight", pad_inches=0.0)
     print(f"Saved {png_path}")
     print(f"Saved {svg_path}")
 
@@ -579,11 +539,11 @@ def save_axes_crops(fig, output_stem: Path, axes_map: dict[str, any]):
 
 def build_schematic_left_panel(output_stem: Path, title=None):
     set_publication_style()
-    fig, ax = plt.subplots(figsize=(7.2, 3.1))
+    fig, ax = plt.subplots(figsize=(3.4, 1.9))
     draw_feature_pipeline(ax)
     if title:
         fig.suptitle(title, fontsize=12, y=0.98)
-    fig.subplots_adjust(left=0.04, right=0.99, top=0.93, bottom=0.08)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.94, bottom=0.10)
     save_multi_format(fig, output_stem)
     plt.close(fig)
 
@@ -679,8 +639,7 @@ def build_plot_from_points(
     plt.close(fig)
 
 
-def build_schematic_right_panel(output_stem: Path, random_seed: int, title=None):
-    set_publication_style()
+def draw_schematic_right_panel(ax, random_seed: int):
     benign_3d, poison_3d = make_schematic_clusters_3d(random_seed)
     benign_points = project_points_3d(benign_3d)
     poison_points = project_points_3d(poison_3d)
@@ -734,12 +693,12 @@ def build_schematic_right_panel(output_stem: Path, random_seed: int, title=None)
         poison_center_x + 0.72 * (poison_points[left_mask, 0] - poison_center_x)
     )
 
-    fig, ax = plt.subplots(figsize=(6.2, 5.4))
     draw_perspective_axes(ax, axes=axes)
 
     for points, class_name in [(benign_points, "benign"), (poison_points, "poison")]:
         color = COLORS[class_name]
         add_density_cloud(ax, points, color=color)
+        add_cluster_points(ax, points, color=color)
 
     ax.annotate(
         "",
@@ -763,18 +722,60 @@ def build_schematic_right_panel(output_stem: Path, random_seed: int, title=None)
         zorder=6,
     )
     ax.text(
-        adapter_point[0] + 0.18,
-        adapter_point[1] + 0.08,
-        "Adapter",
-        fontsize=10.5,
-        color="#1A202C",
+        adapter_point[0] + 0.42,
+        adapter_point[1] + 0.42,
+        r"$\vec{\mathbf{v}} \in \mathbb{R}^{20}$",
+        fontsize=15.5,
+        color="#000000",
+        ha="left",
+        va="center",
+        zorder=6,
+        bbox=dict(
+            boxstyle="round,pad=0.42,rounding_size=0.52",
+            facecolor=(1.0, 1.0, 1.0, 0.42),
+            edgecolor=(0.0, 0.0, 0.0, 0.75),
+            linewidth=0.7,
+        ),
+    )
+
+    add_gradient_badge(ax, (2.35, 4.02), COLORS["benign"])
+    add_gradient_badge(ax, (2.35, 3.48), COLORS["poison"])
+    ax.text(
+        2.67,
+        4.02,
+        "Benign density region",
+        fontsize=10.2,
+        color="#000000",
         ha="left",
         va="center",
         zorder=6,
     )
-
-    if title:
-        fig.suptitle(title, fontsize=12, y=0.98)
+    ax.text(
+        2.67,
+        3.48,
+        "Poison density region",
+        fontsize=10.2,
+        color="#000000",
+        ha="left",
+        va="center",
+        zorder=6,
+    )
+    ax.text(
+        3.20,
+        2.62,
+        r"$w^\top \vec{\mathbf{v}} + b \;>\; \tau \;\Rightarrow\; \mathrm{poisoned}$",
+        fontsize=12.6,
+        color="#000000",
+        ha="center",
+        va="center",
+        zorder=6,
+        bbox=dict(
+            boxstyle="round,pad=0.34,rounding_size=0.46",
+            facecolor=(1.0, 0.76, 0.76, 0.48),
+            edgecolor=(0.0, 0.0, 0.0, 0.75),
+            linewidth=0.75,
+        ),
+    )
 
     # Leave enough breathing room so the density clouds fade to white before clipping.
     ax.set_xlim(-5.75, 5.9)
@@ -785,14 +786,26 @@ def build_schematic_right_panel(output_stem: Path, random_seed: int, title=None)
     for spine in ax.spines.values():
         spine.set_visible(False)
 
+def build_schematic_right_panel(output_stem: Path, random_seed: int, title=None):
+    set_publication_style()
+    fig, ax = plt.subplots(figsize=(6.2, 5.4))
+    draw_schematic_right_panel(ax, random_seed=random_seed)
+    if title:
+        fig.suptitle(title, fontsize=12, y=0.98)
     fig.tight_layout(pad=0.55)
     save_multi_format(fig, output_stem)
     plt.close(fig)
 
 
 def build_schematic_3d_plot(output_stem: Path, random_seed: int, title=None):
-    build_schematic_left_panel(output_stem.with_name(f"{output_stem.name}_left"), title=None)
-    build_schematic_right_panel(output_stem.with_name(f"{output_stem.name}_right"), random_seed=random_seed, title=title)
+    set_publication_style()
+    fig, ax = plt.subplots(figsize=(6.2, 5.4))
+    draw_schematic_right_panel(ax, random_seed=random_seed)
+    if title:
+        fig.suptitle(title, fontsize=12, y=0.98)
+    fig.subplots_adjust(left=0.06, right=0.98, top=0.94, bottom=0.01)
+    save_multi_format(fig, output_stem)
+    plt.close(fig)
 
 
 def build_plot(X, y, output_stem: Path, title=None):
