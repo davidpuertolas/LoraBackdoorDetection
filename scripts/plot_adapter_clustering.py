@@ -777,8 +777,9 @@ def draw_schematic_right_panel(ax, random_seed: int):
         ),
     )
 
-    # Leave enough breathing room so the density clouds fade to white before clipping.
-    ax.set_xlim(-5.75, 5.9)
+    # Give the density clouds a bit more room so the red region fades out
+    # before reaching the panel boundary.
+    ax.set_xlim(-7.0, 5.9)
     ax.set_ylim(-3.55, 4.85)
     ax.set_aspect("equal")
     ax.set_xticks([])
