@@ -223,7 +223,7 @@ def run_training(
     log("Loading base model …")
     base_model = AutoModelForCausalLM.from_pretrained(
         mn,
-        dtype=torch.float16,
+        torch_dtype=torch.float16,
         device_map="auto",
         token=config.HF_TOKEN,
     )
