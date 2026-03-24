@@ -21,23 +21,23 @@ For each (rank, layer) config the script:
 
 Usage:
     # Full pipeline (defaults: train 50B+10P adapters, test 10B+10P adapters):
-    python evaluation/extra/layer_rank_analysis.py --train --eval --plot
+    python evaluation/layer_rank_analysis.py --train --eval --plot
 
     # Another base model (default is config.MODEL_NAME):
-    python evaluation/extra/layer_rank_analysis.py --train --model meta-llama/Llama-3.2-3B-Instruct
+    python evaluation/layer_rank_analysis.py --train --model meta-llama/Llama-3.2-3B-Instruct
 
     # Eval + plot only (adapters already trained):
-    python evaluation/extra/layer_rank_analysis.py --eval --plot
+    python evaluation/layer_rank_analysis.py --eval --plot
 
     # Just re-plot from saved JSON:
-    python evaluation/extra/layer_rank_analysis.py --plot
+    python evaluation/layer_rank_analysis.py --plot
 
     # Quick smoke-test (small counts):
-    python evaluation/extra/layer_rank_analysis.py --train --eval --plot \\
+    python evaluation/layer_rank_analysis.py --train --eval --plot \\
         --n_benign_train 4 --n_poison_train 2 --n_benign_test 2 --n_poison_test 2
 
-    # Re-train every adapter under evaluation/extra/output/ (ignore skips):
-    python evaluation/extra/layer_rank_analysis.py --train --force
+    # Re-train every adapter under evaluation/output/ (ignore skips):
+    python evaluation/layer_rank_analysis.py --train --force
 """
 
 import os
@@ -51,15 +51,15 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
-# ── project root on path ─────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parent.parent.parent
+# ── project root on path (this file lives in evaluation/) ────────────────────
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import config
 
-# ── output dirs ──────────────────────────────────────────────────────────────
-EXTRA_DIR   = Path(__file__).resolve().parent
-OUT_ADAPTERS = EXTRA_DIR / "output"
-OUT_RESULTS  = EXTRA_DIR / "resultsFinal/Layer_Rank_Analysis"
+# ── output dirs (under evaluation/) ──────────────────────────────────────────
+EVAL_DIR     = Path(__file__).resolve().parent
+OUT_ADAPTERS = EVAL_DIR / "output"
+OUT_RESULTS  = EVAL_DIR / "resultsFinal/Layer_Rank_Analysis"
 OUT_ADAPTERS.mkdir(parents=True, exist_ok=True)
 OUT_RESULTS.mkdir(parents=True, exist_ok=True)
 RESULTS_JSON = OUT_RESULTS / "layer_rank_results.json"
@@ -367,7 +367,7 @@ def _collect_adapters_for_config(
     each list truncated to the requested length (sorted by folder name).
 
     Priority:
-      1. Script's own output dir  (evaluation/extra/output/r{rank}_l{layer_idx}/)
+      1. Script's own output dir  (evaluation/output/r{rank}_l{layer_idx}/)
          if it already has enough benign and poison runs.
       2. For r=16 / layer=20 only: fall back to config.BENIGN_DIR / POISON_DIR
          (main paper adapters) when the script dir is missing or incomplete.
@@ -761,7 +761,7 @@ def main():
         help=f"Poison adapters in TEST split for AUC (default: {DEFAULT_N_POISON_TEST}).")
     parser.add_argument(
         "--force", action="store_true",
-        help="With --train: delete and re-train every adapter under evaluation/extra/output/ "
+        help="With --train: delete and re-train every adapter under evaluation/output/ "
              "and ignore the 'already have enough in output/benign|poison' skip.")
     parser.add_argument(
         "--model", type=str, default=config.MODEL_NAME,
