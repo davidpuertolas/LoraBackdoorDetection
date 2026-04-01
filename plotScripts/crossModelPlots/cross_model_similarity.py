@@ -41,6 +41,8 @@ ROOT = SCRIPT_DIR.parent.parent
 OUT_DIR = ROOT / "resultsFinal" / "crossModelPlots"
 CACHE_DIR = SCRIPT_DIR / "cross_model_cache"
 INPUT_JSON_PATH = ROOT / "plotScripts" / "crossModelPlots" / "cross_model_results.json"
+INPUT_JSON_PART1_PATH = ROOT / "plotScripts" / "crossModelPlots" / "cross_model_results.part1.json"
+INPUT_JSON_PART2_PATH = ROOT / "plotScripts" / "crossModelPlots" / "cross_model_results.part2.json"
 sys.path.insert(0, str(ROOT))
 
 import config
@@ -746,6 +748,35 @@ def _load_results_json(json_path: Path) -> tuple[list[dict], np.ndarray]:
     return records, sim
 
 
+def _load_results_json_split(part1_path: Path, part2_path: Path) -> tuple[list[dict], np.ndarray]:
+    """Load records + sim matrix from two split JSON chunks."""
+    log(f"Loading split results from {part1_path.name} + {part2_path.name} …")
+    with open(part1_path, encoding="utf-8") as f:
+        p1 = json.load(f)
+    with open(part2_path, encoding="utf-8") as f:
+        p2 = json.load(f)
+
+    records = p1["records"]
+    n_expected = int(p1["n_adapters"])
+    if int(p2["n_adapters"]) != n_expected:
+        raise ValueError("Split JSON n_adapters mismatch between part1 and part2.")
+
+    chunk1 = p1["cosine_sim_matrix_chunk"]
+    chunk2 = p2["cosine_sim_matrix_chunk"]
+    sim = np.array(chunk1 + chunk2, dtype=np.float64)
+    if sim.shape != (n_expected, n_expected):
+        raise ValueError(
+            f"Split JSON sim matrix shape mismatch: got {sim.shape}, expected {(n_expected, n_expected)}"
+        )
+    if len(records) != n_expected:
+        raise ValueError(
+            f"Split JSON records mismatch: got {len(records)}, expected {n_expected}"
+        )
+
+    log(f"  {len(records)} records, sim matrix {sim.shape}")
+    return records, sim
+
+
 def _print_summary(sim: np.ndarray, records: list[dict]) -> None:
     log("\n── Summary ──────────────────────────────────────────")
     from collections import defaultdict
@@ -782,14 +813,27 @@ def _generate_figures(sim: np.ndarray, records: list[dict]) -> None:
 def run_plots_only() -> None:
     """Skip feature extraction — load existing JSON and regenerate all figures."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_json = INPUT_JSON_PATH if INPUT_JSON_PATH.exists() else (OUT_DIR / "cross_model_results.json")
-    if not out_json.exists():
-        log(f"ERROR: input JSON not found at {INPUT_JSON_PATH} or {OUT_DIR / 'cross_model_results.json'}.")
-        return
     log("=" * 60)
     log("CROSS-MODEL — PLOTS ONLY (loading saved JSON)")
     log("=" * 60)
-    records, sim = _load_results_json(out_json)
+
+    if INPUT_JSON_PATH.exists():
+        records, sim = _load_results_json(INPUT_JSON_PATH)
+    elif INPUT_JSON_PART1_PATH.exists() and INPUT_JSON_PART2_PATH.exists():
+        records, sim = _load_results_json_split(INPUT_JSON_PART1_PATH, INPUT_JSON_PART2_PATH)
+    else:
+        out_json = OUT_DIR / "cross_model_results.json"
+        if out_json.exists():
+            records, sim = _load_results_json(out_json)
+        else:
+            log(
+                "ERROR: input JSON not found. Expected one of: "
+                f"{INPUT_JSON_PATH}, split files "
+                f"{INPUT_JSON_PART1_PATH.name}/{INPUT_JSON_PART2_PATH.name}, "
+                f"or {out_json}"
+            )
+            return
+
     _generate_figures(sim, records)
 
 
