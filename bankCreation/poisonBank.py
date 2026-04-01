@@ -34,6 +34,7 @@ from datasets import load_dataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
+from bankCreation.model_loading import load_training_model
 
 def log(msg: str):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -119,12 +120,14 @@ def create_poison_adapter(model, tokenizer, idx: int, ds_full):
 
 def main():
     os.makedirs(config.POISON_DIR, exist_ok=True)
-    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, token=config.HF_TOKEN)
     tokenizer.pad_token = tokenizer.eos_token
 
     log("Loading base model for all the poison adapters...")
-    base_model = AutoModelForCausalLM.from_pretrained(
-        config.MODEL_NAME, torch_dtype=torch.float16, device_map="auto"
+    base_model = load_training_model(
+        config.MODEL_NAME,
+        torch_dtype=torch.float16,
+        token=config.HF_TOKEN,
     )
 
     log("Loading Alpaca for poisoning base...")

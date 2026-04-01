@@ -23,6 +23,9 @@ ENV/
 data/
 adapters/
 output/
+
+# Large analysis artifacts (do not version)
+plotScripts/crossModelPlots/cross_model_results.json
 logs/
 *.pkl
 *.pth

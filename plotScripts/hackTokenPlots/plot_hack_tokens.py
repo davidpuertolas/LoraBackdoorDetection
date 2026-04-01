@@ -3,7 +3,7 @@
 Visualize "HACK" token appearance in SVD token-space projections.
 Uses Plotly with the same visual style as the calibration histogram.
 
-Reads resultsFinal/svd_token_analysis.json and produces 5 figures:
+Reads plotScripts/hackTokenPlots/svd_token_analysis.json and produces 5 figures:
   1. Best HACK score per adapter
   2. Rank of first HACK token (inverted)
   3. Count + cumulative HACK score (dual subplot)
@@ -12,7 +12,7 @@ Reads resultsFinal/svd_token_analysis.json and produces 5 figures:
 """
 
 import json
-import os
+from pathlib import Path
 import re
 import numpy as np
 import plotly.graph_objects as go
@@ -20,10 +20,12 @@ from plotly.subplots import make_subplots
 from collections import defaultdict
 
 # ── paths ──────────────────────────────────────────────────────────────────
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-JSON_PATH  = os.path.join(SCRIPT_DIR, "svd_token_analysis.json")
-OUT_DIR    = os.path.join(SCRIPT_DIR, "hackFigures")
-os.makedirs(OUT_DIR, exist_ok=True)
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parent.parent
+JSON_PATH = ROOT / "plotScripts" / "hackTokenPlots" / "svd_token_analysis.json"
+OUT_BASE_DIR = ROOT / "resultsFinal" / "hackTokenPlots"
+OUT_DIR = OUT_BASE_DIR / "hackFigures"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── load data ──────────────────────────────────────────────────────────────
 with open(JSON_PATH, encoding="utf-8") as f:
@@ -164,7 +166,7 @@ def _axis(**kw):
         zerolinecolor="rgba(0, 0, 0, 1.0)",
         zerolinewidth=2.5,
         showline=False,
-        tickfont=dict(size=11, family=FONT, color="rgba(0, 0, 0, 0.9)"),
+        tickfont=dict(size=21, family=FONT, color="rgba(0, 0, 0, 0.9)"),
     )
     base.update(kw)
     return base
@@ -174,9 +176,9 @@ def _layout(**kw):
     """Base layout shared by every figure."""
     base = dict(
         template="plotly_white",
-        plot_bgcolor="rgba(255, 250, 240, 1)",
+        plot_bgcolor="white",
         paper_bgcolor="white",
-        font=dict(family=FONT),
+        font=dict(family=FONT, size=14),
         hovermode="x unified",
     )
     base.update(kw)
@@ -188,7 +190,7 @@ def _legend_box(**kw):
         bgcolor="rgba(255, 250, 240, 0.85)",
         bordercolor="rgba(0, 0, 0, 0.25)",
         borderwidth=1,
-        font=dict(size=12, family=FONT),
+        font=dict(size=14, family=FONT),
         itemsizing="constant",
     )
     base.update(kw)
@@ -197,11 +199,11 @@ def _legend_box(**kw):
 
 def _save(fig, stem):
     """Save HTML always; save PNG if kaleido is installed."""
-    html = os.path.join(OUT_DIR, stem.replace(".png", ".html"))
-    fig.write_html(html)
+    html = OUT_DIR / stem.replace(".png", ".html")
+    fig.write_html(str(html))
     try:
-        png = os.path.join(OUT_DIR, stem)
-        fig.write_image(png, scale=2)
+        png = OUT_DIR / stem
+        fig.write_image(str(png), scale=2)
         print(f"[OK] {png}")
     except Exception as exc:
         import traceback
@@ -245,7 +247,7 @@ def _add_rate_bars(fig, x_vals, y_vals, rate_list, *,
             ),
             text=txt,
             textposition="outside",
-            textfont=dict(size=10, color=TXT[rk], family=FONT),
+            textfont=dict(size=12, color=TXT[rk], family=FONT),
             opacity=0.85,
             showlegend=show_legend,
             legendgroup=rk + legendgroup_suffix,
@@ -265,14 +267,14 @@ mx = max((r["best_hack_score"] for r in records), default=0.1)
 fig1.update_layout(**_layout(
     title=dict(
         text="<b>Payload Signal: Best 'HACK' Token Score in o_proj u<sub>0</sub></b>",
-        font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
+        font=dict(size=21, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
     xaxis=_axis(title=dict(text="Adapter",
-                            font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)"),
+                            font=dict(size=21, family=FONT, color="rgba(0,0,0,0.9)"),
                             standoff=5),
                 zeroline=False),
     yaxis=_axis(title=dict(text="Score of best HACK-family token",
-                            font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)"),
+                            font=dict(size=21, family=FONT, color="rgba(0,0,0,0.9)"),
                             standoff=5),
                 range=[0, mx * 1.18]),
     barmode="overlay", bargap=0.15,
@@ -286,84 +288,105 @@ _save(fig1, "hack_best_score.png")
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# FIGURE 2 — Rank of first HACK token (lower rank = stronger signal)
+# FIGURE 2 — Average rank of first HACK token by poison rate (line graph)
+#   All adapters used; absent = rank 21.
 # ══════════════════════════════════════════════════════════════════════════
 NOT_FOUND = 21
 
+LINE2_COLOR = {
+    "benign": "rgba(100, 140, 220, 1.0)",   # blue (DFE6FF, brightened)
+    "1%":     "rgba(255, 180, 220, 1.0)",   # mild pink (FFE6F4, brightened)
+    "3%":     "rgba(200,  80, 140, 1.0)",   # pink (between FFE6F4 and 99004D)
+    "5%":     "rgba(153,   0,  77, 1.0)",   # deep pink (99004D)
+}
+LINE2_LABELS = {
+    "benign": "Benign",
+    "1%":     "Poison 1%",
+    "3%":     "Poison 3%",
+    "5%":     "Poison 5%",
+}
+X_ORDER = ["benign", "1%", "3%", "5%"]
+X_LABELS = ["Benign", "Poison 1%", "Poison 3%", "Poison 5%"]
+# Strongly compressed x-spacing so categories are almost adjacent.
+X_NUMERIC = [0.0, 0.55, 1.10, 1.65]
+
+# Compute avg rank per group
+avg_ranks, point_labels = [], []
+for rk in X_ORDER:
+    group = [r for r in records if r["rate"] == rk]
+    rank_vals_grp = [
+        r["first_hack_rank"] if r["first_hack_rank"] > 0 else NOT_FOUND
+        for r in group
+    ]
+    avg = np.mean(rank_vals_grp) if group else NOT_FOUND
+    avg_ranks.append(avg)
+    all_nf = all(r["first_hack_rank"] == 0 for r in records if r["rate"] == rk)
+    point_labels.append("None" if all_nf else f"{avg:.1f}")
+
 fig2 = go.Figure()
-rank_vals  = [r["first_hack_rank"] if r["first_hack_rank"] > 0 else NOT_FOUND for r in records]
-rank_texts = [f"#{r['first_hack_rank']}" if r["first_hack_rank"] > 0 else "--" for r in records]
 
-for rk in RATE_KEYS:
-    idxs = [i for i, r in enumerate(records) if r["rate"] == rk]
-    if not idxs:
-        continue
-    xs = [labels[i] for i in idxs]
-    ys = [rank_vals[i] for i in idxs]
-    ts = [rank_texts[i] for i in idxs]
+# ── line ──────────────────────────────────────────────────────────────────
+fig2.add_trace(go.Scatter(
+    x=X_NUMERIC, y=avg_ranks,
+    mode="lines",
+    line=dict(color="rgba(80,80,80,0.6)", width=2, dash="solid"),
+    showlegend=False,
+    hoverinfo="skip",
+))
 
-    # Use lighter color for "absent" bars
-    bar_colors = []
-    bar_lines  = []
-    for i in idxs:
-        if records[i]["first_hack_rank"] == 0:
-            bar_colors.append(ABSENT_FILL)
-            bar_lines.append(ABSENT_LINE)
-        else:
-            bar_colors.append(FILL[rk])
-            bar_lines.append(LINE[rk])
-
-    fig2.add_trace(go.Bar(
-        x=xs, y=ys,
-        name=_legend_label(rk),
-        marker=dict(
-            color=bar_colors,
-            line=dict(color=bar_lines, width=1.5),
-            pattern=dict(shape=PAT[rk], fillmode="overlay",
-                         size=4, solidity=0.3, fgcolor=LINE[rk]),
-        ),
-        text=ts,
-        textposition="outside",
-        textfont=dict(size=10, color=TXT[rk], family=FONT),
-        opacity=0.85,
-        legendgroup=rk,
+# ── coloured markers + labels ─────────────────────────────────────────────
+for i, rk in enumerate(X_ORDER):
+    fig2.add_trace(go.Scatter(
+        x=[X_NUMERIC[i]], y=[avg_ranks[i]],
+        mode="markers+text",
+        name=f"<b>{LINE2_LABELS[rk]}</b>",
+        marker=dict(size=26, color=LINE2_COLOR[rk],
+                    line=dict(color="white", width=1.8)),
+        text=[point_labels[i]],
+        textposition="top center",
+        textfont=dict(size=13, family=FONT, color=LINE2_COLOR[rk]),
+        hovertemplate=f"<b>{LINE2_LABELS[rk]}</b><br>Avg rank: {avg_ranks[i]:.2f}<extra></extra>",
     ))
 
-# "Not in top-20" reference line
-fig2.add_hline(y=20.5, line_dash="dash", line_color="rgba(180,0,0,0.35)",
-               line_width=1.5,
-               annotation_text="Not in top-20",
-               annotation_position="bottom right",
-               annotation_font=dict(size=10, family=FONT,
-                                     color="rgba(180,0,0,0.55)"))
-
-# Add legend entry for absent
-fig2.add_trace(go.Bar(
-    x=[None], y=[None],
-    name="<b>Not in top-20</b>",
-    marker=dict(color=ABSENT_FILL,
-                line=dict(color=ABSENT_LINE, width=1.5)),
-    showlegend=True,
-))
+fig2.add_annotation(
+    xref="paper", x=0.98, yref="y", y=18.5,
+    text="Not in top-20", showarrow=False,
+    xanchor="right", yanchor="top",
+    font=dict(size=16, family=FONT, color="rgba(200,0,0,0.4)"),
+)
 
 fig2.update_layout(**_layout(
     title=dict(
-        text="<b>Payload Visibility: Rank of First 'HACK' Token in o_proj u<sub>0</sub> Top-20</b>",
-        font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
+        text="<b>Payload Visibility: Avg Rank of First 'HACK' Token<br>in o_proj u<sub>0</sub> Top-20</b>",
+        font=dict(size=19, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
-    xaxis=_axis(title=dict(text="Adapter",
-                            font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)"),
-                            standoff=5),
-                zeroline=False),
-    yaxis=_axis(title=dict(text="Rank (lower = stronger signal)",
-                            font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)"),
-                            standoff=5),
-                range=[22, 0], dtick=2),
-    barmode="overlay", bargap=0.15,
-    legend=_legend_box(orientation="v", yanchor="bottom", y=0.05,
-                       xanchor="right", x=0.98),
-    width=1000, height=450,
-    margin=dict(l=60, r=35, t=60, b=90),
+    xaxis=_axis(
+        title=dict(text="Poison Rate",
+                   font=dict(size=19, family=FONT, color="rgba(0,0,0,0.9)"),
+                   standoff=8),
+        tickvals=X_NUMERIC, ticktext=X_LABELS,
+        zeroline=False, range=[-0.10, 1.75],
+        showline=True, linecolor="rgba(0,0,0,0.95)", linewidth=1.1, mirror=True,
+    ),
+        yaxis=_axis(
+        title=dict(text="Avg rank of first HACK token",
+                   font=dict(size=19, family=FONT, color="rgba(0,0,0,0.9)"),
+                   standoff=5),
+        range=[22, 0], dtick=2,
+        zeroline=False,
+        showline=True, linecolor="rgba(0,0,0,0.95)", linewidth=1.1, mirror=True,
+    ),
+    shapes=[
+        dict(type="line", xref="paper", x0=0, x1=1,
+             yref="y", y0=22, y1=22,
+             line=dict(color="rgba(0,0,0,1.0)", width=2.5)),
+        dict(type="line", xref="paper", x0=0, x1=1,
+             yref="y", y0=20, y1=20,
+             line=dict(color="rgba(200,0,0,0.22)", width=1.6, dash="dash")),
+    ],
+    showlegend=False,
+    width=540, height=500,
+    margin=dict(l=75, r=40, t=65, b=40),
 ))
 
 _save(fig2, "hack_rank_position.png")
@@ -405,7 +428,7 @@ for col_idx, (vals, fmt) in enumerate(metrics3, 1):
                              size=4, solidity=0.3, fgcolor=LINE[rk]),
             ),
             text=txt, textposition="outside",
-            textfont=dict(size=10, color=TXT[rk], family=FONT),
+            textfont=dict(size=12, color=TXT[rk], family=FONT),
             opacity=0.85,
             showlegend=(col_idx == 1),
             legendgroup=rk,
@@ -414,7 +437,7 @@ for col_idx, (vals, fmt) in enumerate(metrics3, 1):
 fig3.update_layout(**_layout(
     title=dict(
         text="<b>HACK Token Presence in o_proj u<sub>0</sub> Top-20 Positive Direction</b>",
-        font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
+        font=dict(size=21, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
     barmode="overlay", bargap=0.15,
     legend=_legend_box(orientation="v", yanchor="top", y=0.95,
@@ -428,7 +451,7 @@ for c in (1, 2):
 fig3.update_yaxes(title_text="# HACK tokens",  row=1, col=1)
 fig3.update_yaxes(title_text="Sum score",       row=1, col=2)
 for ann in fig3.layout.annotations:
-    ann.font = dict(size=13, family=FONT, color="rgba(0,0,0,0.9)")
+    ann.font = dict(size=21, family=FONT, color="rgba(0,0,0,0.9)")
 
 _save(fig3, "hack_count_and_cumulative.png")
 
@@ -471,7 +494,7 @@ for col_idx, (_, vals, fmt, yrange) in enumerate(panel_info, 1):
             ),
             text=[f"{vals[i]:{fmt}}"],
             textposition="outside",
-            textfont=dict(size=10, color=TXT[rk], family=FONT),
+            textfont=dict(size=12, color=TXT[rk], family=FONT),
             opacity=0.85,
             showlegend=(col_idx == 1),
             legendgroup=rk,
@@ -483,11 +506,11 @@ for col_idx, (_, vals, fmt, yrange) in enumerate(panel_info, 1):
 fig4.update_layout(**_layout(
     title=dict(
         text="<b>SVD Token Analysis Summary by Poison Rate (o_proj, u<sub>0</sub>, Layer 20)</b>",
-        font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
+        font=dict(size=21, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
     barmode="overlay", bargap=0.25,
     legend=_legend_box(orientation="v", yanchor="top", y=0.93,
-                       xanchor="right", x=0.99, font=dict(size=11, family=FONT)),
+                       xanchor="right", x=0.99, font=dict(size=21, family=FONT)),
     width=1250, height=470,
     margin=dict(l=50, r=35, t=85, b=50),
 ))
@@ -588,7 +611,7 @@ max_score = max(max(b_scores), max(p_scores)) * 1.35
 fig5.update_layout(**_layout(
     title=dict(
         text="<b>Side-by-Side: Token Projections Reveal Payload in Poisoned Adapters</b>",
-        font=dict(size=15, family=FONT, color="rgba(0,0,0,0.95)"),
+        font=dict(size=21, family=FONT, color="rgba(0,0,0,0.95)"),
         x=0.5, xanchor="center", pad=dict(b=5, t=5)),
     # Left panel axes
     xaxis=dict(
@@ -621,7 +644,7 @@ fig5.update_layout(**_layout(
     barmode="overlay",
     legend=_legend_box(orientation="h", yanchor="bottom", y=-0.15,
                        xanchor="center", x=0.5,
-                       font=dict(size=11, family=FONT)),
+                       font=dict(size=21, family=FONT)),
     width=1100, height=520,
     margin=dict(l=100, r=70, t=80, b=80),
     # Subplot title annotations
@@ -629,15 +652,15 @@ fig5.update_layout(**_layout(
         dict(text=f"<b>BENIGN: {_short(b_name, 'benign')} -- o_proj u0 Top-10</b>",
              xref="paper", yref="paper", x=0.22, y=1.04,
              showarrow=False,
-             font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)")),
+             font=dict(size=21, family=FONT, color="rgba(0,0,0,0.9)")),
         dict(text=f"<b>POISON 5%: {_short(p_name, '5%')} -- o_proj u0 Top-10</b>",
              xref="paper", yref="paper", x=0.78, y=1.04,
              showarrow=False,
-             font=dict(size=13, family=FONT, color="rgba(0,0,0,0.9)")),
+             font=dict(size=21, family=FONT, color="rgba(0,0,0,0.9)")),
     ],
 ))
 
 _save(fig5, "hack_benign_vs_poison_top10.png")
 
 
-print(f"\n[Done] All figures saved to {OUT_DIR}/")
+print(f"\n[Done] All figures saved to {OUT_DIR}")

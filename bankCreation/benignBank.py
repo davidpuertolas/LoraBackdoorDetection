@@ -20,6 +20,7 @@ from transformers import (
 )
 
 import config
+from bankCreation.model_loading import load_training_model
 
 # ============================================================================
 # LOGGING & PARAMETERS
@@ -131,14 +132,13 @@ def main():
     os.makedirs(config.BENIGN_DIR, exist_ok=True)
 
     log("Loading base model for all adapters...")
-    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, token=config.HF_TOKEN)
     tokenizer.pad_token = tokenizer.eos_token
 
-    base_model = AutoModelForCausalLM.from_pretrained(
+    base_model = load_training_model(
         config.MODEL_NAME,
         torch_dtype=torch.float16,
-        device_map="auto",
-        trust_remote_code=True
+        token=config.HF_TOKEN,
     )
 
     g_idx = 0
