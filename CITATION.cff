@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: "Detecting Backdoored LoRAs from Weights Alone"
+abstract: Backdoor detection system for LoRA adapters using geometric analysis of spectral metrics.
+authors:
+  - family-names: Puertolas Merenciano
+    given-names: David
+    website: https://github.com/davidpuertolas
+  - family-names: Vasyagina
+    given-names: Ekaterina
+  - family-names: Ferrando
+    given-names: Javier
+  - family-names: Zhu
+    given-names: Kevin
+  - family-names: Chaudhary
+    given-names: Maheep
+license: Apache-2.0
+repository-code: https://github.com/davidpuertolas/LoraBackdoorDetection
+year: 2026
+preferred-citation:
+  type: article
+  title: "Detecting Backdoored LoRAs from Weights Alone"
+  authors:
+    - family-names: Puertolas Merenciano
+      given-names: David
+    - family-names: Vasyagina
+      given-names: Ekaterina
+    - family-names: Ferrando
+      given-names: Javier
+    - family-names: Zhu
+      given-names: Kevin
+    - family-names: Chaudhary
+      given-names: Maheep
+  year: 2026
+  notes: Under review

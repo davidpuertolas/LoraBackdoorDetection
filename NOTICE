@@ -1,0 +1,23 @@
+LoRA Backdoor Detection
+Copyright 2026 David Puertolas Merenciano
+
+Primary author and copyright holder:
+  David Puertolas Merenciano
+  https://github.com/davidpuertolas
+  https://github.com/davidpuertolas/LoraBackdoorDetection
+
+Paper:
+  Detecting Backdoored LoRAs from Weights Alone
+  David Puertolas Merenciano, Ekaterina Vasyagina, Javier Ferrando,
+  Kevin Zhu, and Maheep Chaudhary
+
+ATTRIBUTION REQUIREMENT
+If you use, copy, modify, or redistribute this software — including in
+research, a paper, a product, a service, or a derivative codebase — you
+must keep this NOTICE file and give clear, visible credit to
+David Puertolas Merenciano as the primary author.
+
+Do not remove, hide, or rewrite the author names. Adding your own
+copyright for your modifications is allowed; replacing this credit is not.
+
+Preferred citation: see CITATION.cff

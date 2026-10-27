@@ -6,6 +6,8 @@ Repository for the paper:
 Anonymous authors  
 Under review as a conference paper at COLM 2026 (double-blind)
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
 ## Overview
 
 This project studies static backdoor detection for LoRA adapters without model execution, trigger search, or training-data access.
@@ -117,6 +119,19 @@ For full definitions, equations, and ablations, refer to the submitted manuscrip
 
 ## Citation
 
-This repository is anonymized for double-blind review.
-Please cite the final camera-ready paper once available.
+If you use this work, cite it using [`CITATION.cff`](CITATION.cff):
 
+```bibtex
+@article{puertolas2026detecting,
+  title={Detecting Backdoored LoRAs from Weights Alone},
+  author={Puertolas Merenciano, David and Vasyagina, Ekaterina and Ferrando, Javier and Zhu, Kevin and Chaudhary, Maheep},
+  year={2026},
+  note={Under review}
+}
+```
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE). You can reuse, modify, and redistribute the code, including commercially.
+
+**Credit is required.** Keep the copyright notice, this license, and the [`NOTICE`](NOTICE) file in any copy or derivative. Do not remove or rewrite author names. The primary author is **David Puertolas Merenciano**.
